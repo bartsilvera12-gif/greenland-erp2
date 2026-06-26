@@ -119,12 +119,10 @@ export default function Header() {
             className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-1.5 shadow-sm transition-all hover:border-[#4FAEB2]/60"
           >
             <div
-              className="flex h-9 shrink-0 items-center justify-center rounded-full bg-white px-3"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#4FAEB2] text-sm font-semibold text-white"
               style={{ boxShadow: "0 0 0 3px rgba(79, 174, 178, 0.25)" }}
             >
-              <span className="whitespace-nowrap text-xs font-semibold text-[#3F8E91]">
-                Green Land
-              </span>
+              {(displayName.trim()[0] ?? "U").toUpperCase()}
             </div>
             <div className="hidden text-left sm:block">
               <p className="max-w-[180px] truncate text-sm font-semibold text-slate-900">{displayName}</p>
