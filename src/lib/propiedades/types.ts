@@ -43,8 +43,8 @@ export interface Propiedad {
   destacada: boolean;
   visible_web: boolean;
   activo: boolean;
-  imagen_path: string | null;
-  imagen_url: string | null;
+  imagen_path?: string | null;
+  imagen_url?: string | null;
   created_at: string;
   updated_at: string;
 }
