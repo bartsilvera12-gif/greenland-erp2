@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { successResponse, errorResponse } from "@/lib/api/response";
 import { API_ERRORS } from "@/lib/api/errors";
 import { getClientesSupabaseFromAuthWithRol } from "@/lib/clientes/clientes-service-client";
+import { signPropiedadImagen } from "@/lib/propiedades/imagen-storage";
 
 const TIPOS_VALIDOS = new Set([
   "casa",
@@ -66,7 +67,14 @@ export async function GET(request: NextRequest) {
     if (error) {
       return NextResponse.json(errorResponse(error.message), { status: 400 });
     }
-    return NextResponse.json(successResponse(data ?? []));
+    const rows = (data ?? []) as Array<Record<string, unknown> & { imagen_path?: string | null }>;
+    const withSigned = await Promise.all(
+      rows.map(async (r) => ({
+        ...r,
+        imagen_url: r.imagen_path ? await signPropiedadImagen(supabase, r.imagen_path, 3600) : null,
+      })),
+    );
+    return NextResponse.json(successResponse(withSigned));
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Error";
     return NextResponse.json(errorResponse(msg), { status: 500 });

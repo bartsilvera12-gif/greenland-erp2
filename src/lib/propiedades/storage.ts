@@ -29,6 +29,8 @@ interface SupabaseRow {
   destacada: boolean;
   visible_web: boolean;
   activo: boolean;
+  imagen_path?: string | null;
+  imagen_url?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -64,6 +66,8 @@ function rowToPropiedad(row: SupabaseRow): Propiedad {
     destacada: row.destacada === true,
     visible_web: row.visible_web !== false,
     activo: row.activo !== false,
+    imagen_path: row.imagen_path ?? null,
+    imagen_url: row.imagen_url ?? null,
     created_at: row.created_at,
     updated_at: row.updated_at,
   };

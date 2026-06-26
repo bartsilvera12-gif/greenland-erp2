@@ -17,8 +17,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Autorepuestos Felix Bogado",
-  description: "Sistema de gestión Zentra — Autorepuestos Felix Bogado",
+  title: "Green Land",
+  description: "Green Land",
 };
 
 export const viewport: Viewport = {

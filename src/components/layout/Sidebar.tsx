@@ -95,18 +95,15 @@ export const ALLOWED_MENU_KEYS = new Set<string>([
   "dashboard",
   "clientes",
   "ventas",
-  // "pagos" (Cobros) ocultado a pedido del cliente: la cobranza se
-  // gestiona desde Ventas/Caja directamente. Se mantiene "pagos_proveedores"
-  // para registrar lo que se le paga a los proveedores (CxP).
+  "pagos",
   "pagos_proveedores",
-  "gastos",
   "reportes",
   "configuracion",
   "inventario",
   "compras",
   "buscador",
-  "usuarios",
   "propiedades",
+  "promociones",
 ]);
 
 const MENU_STRUCTURE: MenuItem[] = [
@@ -140,7 +137,8 @@ const MENU_STRUCTURE: MenuItem[] = [
     icon: Activity,
   },
   { key: "buscador", slug: "buscador", label: "Consulta", href: "/buscador", icon: Search },
-  { key: "ventas", slug: "ventas", label: "Caja", href: "/ventas", icon: ShoppingCart },
+  { key: "ventas", slug: "ventas", label: "Venta", href: "/ventas", icon: ShoppingCart },
+  { key: "promociones", slug: "promociones", label: "Promociones", href: "/promociones", icon: Megaphone },
   { key: "presupuestos", slug: "presupuestos", label: "Presupuestos", href: "/presupuestos", icon: FileText },
   {
     key: "proyectos",
@@ -224,7 +222,7 @@ const MENU_STRUCTURE: MenuItem[] = [
  */
 const MENU_FAMILIES: { id: string; titulo: string; keys: string[] }[] = [
   { id: "inicio", titulo: "Inicio", keys: ["dashboard"] },
-  { id: "comercial", titulo: "Comercial", keys: ["clientes", "crm", "gestion-clientes", "ventas", "presupuestos", "comisiones", "planes"] },
+  { id: "comercial", titulo: "Comercial", keys: ["clientes", "crm", "gestion-clientes", "ventas", "presupuestos", "promociones", "comisiones", "planes"] },
   { id: "finanzas", titulo: "Finanzas", keys: ["pagos", "pagos_proveedores", "gastos", "notas_credito", "reportes"] },
   { id: "operaciones", titulo: "Operaciones", keys: ["inventario", "compras", "recetas", "proyectos", "propiedades"] },
   { id: "omnicanal", titulo: "Omnicanal", keys: ["conversaciones", "conversaciones-finalizadas", "historial-omnicanal", "monitoreo", "campanas"] },

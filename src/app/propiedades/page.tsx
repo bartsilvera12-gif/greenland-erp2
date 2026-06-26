@@ -7,6 +7,7 @@ import type { Propiedad } from "@/lib/propiedades/types";
 import DeletePropiedadButton from "./DeletePropiedadButton";
 import ToggleActivoButton from "./ToggleActivoButton";
 import ToggleDestacadaButton from "./ToggleDestacadaButton";
+import PropiedadCoverCell from "./PropiedadCoverCell";
 
 function fmtPrecio(precio: number | null, moneda: string | null): string {
   if (precio == null) return "—";
@@ -136,6 +137,7 @@ export default function PropiedadesPage() {
           <table className="min-w-full text-xs">
             <thead className="border-b border-slate-200 bg-slate-50 text-left text-[10px] font-semibold uppercase tracking-wider text-slate-500">
               <tr>
+                <th className="px-3 py-2.5">Foto</th>
                 <th className="px-3 py-2.5">Título</th>
                 <th className="hidden px-3 py-2.5 md:table-cell">Tipo</th>
                 <th className="hidden px-3 py-2.5 lg:table-cell">Operación</th>
@@ -151,6 +153,9 @@ export default function PropiedadesPage() {
             <tbody className="divide-y divide-slate-100">
               {filtradas.map((p) => (
                 <tr key={p.id} className="hover:bg-slate-50">
+                  <td className="px-3 py-2">
+                    <PropiedadCoverCell propiedad={p} onChange={onChangeLocal} />
+                  </td>
                   <td className="px-3 py-2">
                     <div className="font-medium text-slate-900">{p.titulo}</div>
                     {p.codigo ? (
