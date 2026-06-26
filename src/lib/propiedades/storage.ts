@@ -31,6 +31,14 @@ interface SupabaseRow {
   activo: boolean;
   imagen_path?: string | null;
   imagen_url?: string | null;
+  modalidad?: string | null;
+  cuotas_cantidad?: number | null;
+  cuota_monto?: number | string | null;
+  servicios?: unknown;
+  medidas?: unknown;
+  finca?: string | null;
+  padron?: string | null;
+  cuenta_catastral?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -68,6 +76,16 @@ function rowToPropiedad(row: SupabaseRow): Propiedad {
     activo: row.activo !== false,
     imagen_path: row.imagen_path ?? null,
     imagen_url: row.imagen_url ?? null,
+    modalidad: row.modalidad ?? null,
+    cuotas_cantidad: row.cuotas_cantidad ?? null,
+    cuota_monto: toNum(row.cuota_monto ?? null),
+    servicios: Array.isArray(row.servicios) ? (row.servicios as string[]) : [],
+    medidas: (row.medidas && typeof row.medidas === "object")
+      ? (row.medidas as Record<string, { m?: number; linda?: string }>)
+      : {},
+    finca: row.finca ?? null,
+    padron: row.padron ?? null,
+    cuenta_catastral: row.cuenta_catastral ?? null,
     created_at: row.created_at,
     updated_at: row.updated_at,
   };

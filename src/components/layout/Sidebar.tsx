@@ -92,18 +92,12 @@ function adminEmpresasMatchesQuery(queryRaw: string): boolean {
  * Mantener sincronizado si se piden nuevos módulos visibles para esta instancia.
  */
 export const ALLOWED_MENU_KEYS = new Set<string>([
-  "dashboard",
-  "clientes",
   "ventas",
-  "pagos",
-  "pagos_proveedores",
-  "reportes",
-  "configuracion",
-  "inventario",
-  "compras",
-  "buscador",
-  "propiedades",
+  "clientes",
   "promociones",
+  "propiedades",
+  "reportes",
+  "testimonios",
 ]);
 
 const MENU_STRUCTURE: MenuItem[] = [
@@ -139,6 +133,7 @@ const MENU_STRUCTURE: MenuItem[] = [
   { key: "buscador", slug: "buscador", label: "Consulta", href: "/buscador", icon: Search },
   { key: "ventas", slug: "ventas", label: "Venta", href: "/ventas", icon: ShoppingCart },
   { key: "promociones", slug: "promociones", label: "Promociones", href: "/promociones", icon: Megaphone },
+  { key: "testimonios", slug: "testimonios", label: "Testimonios", href: "/testimonios", icon: Star },
   { key: "presupuestos", slug: "presupuestos", label: "Presupuestos", href: "/presupuestos", icon: FileText },
   {
     key: "proyectos",
@@ -223,6 +218,7 @@ const MENU_STRUCTURE: MenuItem[] = [
 const MENU_FAMILIES: { id: string; titulo: string; keys: string[] }[] = [
   { id: "inicio", titulo: "Inicio", keys: ["dashboard"] },
   { id: "comercial", titulo: "Comercial", keys: ["clientes", "crm", "gestion-clientes", "ventas", "presupuestos", "promociones", "comisiones", "planes"] },
+  { id: "contenido", titulo: "Contenido web", keys: ["testimonios"] },
   { id: "finanzas", titulo: "Finanzas", keys: ["pagos", "pagos_proveedores", "gastos", "notas_credito", "reportes"] },
   { id: "operaciones", titulo: "Operaciones", keys: ["inventario", "compras", "recetas", "proyectos", "propiedades"] },
   { id: "omnicanal", titulo: "Omnicanal", keys: ["conversaciones", "conversaciones-finalizadas", "historial-omnicanal", "monitoreo", "campanas"] },

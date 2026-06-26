@@ -77,6 +77,14 @@ function buildPatch(body: Record<string, unknown>): Record<string, unknown> {
   if ("destacada" in body) patch.destacada = body.destacada === true;
   if ("visible_web" in body) patch.visible_web = body.visible_web !== false;
   if ("activo" in body) patch.activo = body.activo !== false;
+  if ("modalidad" in body) patch.modalidad = strOrNull(body.modalidad);
+  if ("cuotas_cantidad" in body) patch.cuotas_cantidad = intOrNull(body.cuotas_cantidad);
+  if ("cuota_monto" in body) patch.cuota_monto = numOrNull(body.cuota_monto);
+  if ("servicios" in body) patch.servicios = Array.isArray(body.servicios) ? body.servicios : [];
+  if ("medidas" in body) patch.medidas = typeof body.medidas === "object" && body.medidas !== null ? body.medidas : {};
+  if ("finca" in body) patch.finca = strOrNull(body.finca);
+  if ("padron" in body) patch.padron = strOrNull(body.padron);
+  if ("cuenta_catastral" in body) patch.cuenta_catastral = strOrNull(body.cuenta_catastral);
   return patch;
 }
 

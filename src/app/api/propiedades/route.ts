@@ -118,6 +118,14 @@ export async function POST(request: NextRequest) {
       destacada: body.destacada === true,
       visible_web: body.visible_web !== false,
       activo: body.activo !== false,
+      modalidad: strOrNull(body.modalidad),
+      cuotas_cantidad: intOrNull(body.cuotas_cantidad),
+      cuota_monto: numOrNull(body.cuota_monto),
+      servicios: Array.isArray(body.servicios) ? body.servicios : [],
+      medidas: typeof body.medidas === "object" && body.medidas !== null ? body.medidas : {},
+      finca: strOrNull(body.finca),
+      padron: strOrNull(body.padron),
+      cuenta_catastral: strOrNull(body.cuenta_catastral),
     };
 
     const { data, error } = await supabase.from("propiedades").insert([insert]).select().single();

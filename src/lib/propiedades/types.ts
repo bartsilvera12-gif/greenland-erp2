@@ -45,6 +45,14 @@ export interface Propiedad {
   activo: boolean;
   imagen_path?: string | null;
   imagen_url?: string | null;
+  modalidad?: string | null;
+  cuotas_cantidad?: number | null;
+  cuota_monto?: number | null;
+  servicios?: string[] | null;
+  medidas?: Record<string, { m?: number; linda?: string }> | null;
+  finca?: string | null;
+  padron?: string | null;
+  cuenta_catastral?: string | null;
   created_at: string;
   updated_at: string;
 }
