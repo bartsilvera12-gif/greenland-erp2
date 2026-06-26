@@ -34,6 +34,7 @@ import {
   Utensils,
   BarChart3,
   Banknote,
+  Building,
 } from "lucide-react";
 import type { Session } from "@supabase/supabase-js";
 import { fetchWithSupabaseSession } from "@/lib/api/fetch-with-supabase-session";
@@ -105,6 +106,7 @@ export const ALLOWED_MENU_KEYS = new Set<string>([
   "compras",
   "buscador",
   "usuarios",
+  "propiedades",
 ]);
 
 const MENU_STRUCTURE: MenuItem[] = [
@@ -155,6 +157,7 @@ const MENU_STRUCTURE: MenuItem[] = [
     // "Depósitos / Ubicaciones" oculto en instancia En lo de Mari (no aplica para gastronomía).
   ]},
   { key: "clientes", slug: "clientes", label: "Clientes", href: "/clientes", icon: Users },
+  { key: "propiedades", slug: "propiedades", label: "Propiedades", href: "/propiedades", icon: Building },
   { key: "pagos", slug: "pagos", label: "Cobros", href: "/pagos", icon: Banknote },
   { key: "pagos_proveedores", slug: "pagos_proveedores", label: "Pagos a proveedores", href: "/pagos-proveedores", icon: Banknote },
   {
@@ -223,7 +226,7 @@ const MENU_FAMILIES: { id: string; titulo: string; keys: string[] }[] = [
   { id: "inicio", titulo: "Inicio", keys: ["dashboard"] },
   { id: "comercial", titulo: "Comercial", keys: ["clientes", "crm", "gestion-clientes", "ventas", "presupuestos", "comisiones", "planes"] },
   { id: "finanzas", titulo: "Finanzas", keys: ["pagos", "pagos_proveedores", "gastos", "notas_credito", "reportes"] },
-  { id: "operaciones", titulo: "Operaciones", keys: ["inventario", "compras", "recetas", "proyectos"] },
+  { id: "operaciones", titulo: "Operaciones", keys: ["inventario", "compras", "recetas", "proyectos", "propiedades"] },
   { id: "omnicanal", titulo: "Omnicanal", keys: ["conversaciones", "conversaciones-finalizadas", "historial-omnicanal", "monitoreo", "campanas"] },
   { id: "marketing", titulo: "Marketing y Automatización", keys: ["marketing", "marketing_ops", "sorteos"] },
   { id: "administracion", titulo: "Administración", keys: ["usuarios", "configuracion"] },
