@@ -2,6 +2,17 @@ import { NextRequest, NextResponse } from "next/server";
 import { successResponse, errorResponse } from "@/lib/api/response";
 import { API_ERRORS } from "@/lib/api/errors";
 import { getClientesSupabaseFromAuthWithRol } from "@/lib/clientes/clientes-service-client";
+import { signPropiedadImagen } from "@/lib/propiedades/imagen-storage";
+
+export type GreenPropiedadCard = {
+  id: string;
+  titulo: string;
+  tipo: string | null;
+  ciudad: string | null;
+  precio: number | null;
+  moneda: string | null;
+  imagen_url: string | null;
+};
 
 export type GreenPropiedadesSummary = {
   propiedades: {
@@ -13,13 +24,8 @@ export type GreenPropiedadesSummary = {
     pct_destacadas: number;
     pct_activas: number;
   };
-  promociones: {
-    activas: number;
-    vencidas_30d: number;
-    vencen_7d: number;
-    vencen_30d: number;
-    sin_vencimiento: number;
-  };
+  ultimas: GreenPropiedadCard[];
+  por_ciudad: Array<{ ciudad: string; n: number }>;
 };
 
 export async function GET(request: NextRequest) {
@@ -28,15 +34,15 @@ export async function GET(request: NextRequest) {
     if (!ctx) return NextResponse.json(errorResponse(API_ERRORS.UNAUTHORIZED), { status: 401 });
     const { auth, supabase } = ctx;
 
+    // 1) Conteos
     const { data: propsRaw, error: errProps } = await supabase
       .from("propiedades")
-      .select("activo, visible_web, destacada")
+      .select("activo, visible_web, destacada, ciudad")
       .eq("empresa_id", auth.empresa_id);
     if (errProps) {
       console.error("[greenland-propiedades-summary] propiedades:", errProps.message);
     }
-
-    const props = (propsRaw ?? []) as Array<{ activo: boolean; visible_web: boolean | null; destacada: boolean }>;
+    const props = (propsRaw ?? []) as Array<{ activo: boolean; visible_web: boolean | null; destacada: boolean; ciudad: string | null }>;
     const total = props.length;
     const activas = props.filter((p) => p.activo).length;
     const publicadas = props.filter((p) => p.activo && p.visible_web !== false).length;
@@ -45,52 +51,47 @@ export async function GET(request: NextRequest) {
     const pct_destacadas = total > 0 ? Math.round((destacadas / total) * 100) : 0;
     const pct_activas = total > 0 ? Math.round((activas / total) * 100) : 0;
 
-    let promosRaw: unknown = null;
-    try {
-      const { data, error } = await supabase
-        .from("promociones")
-        .select("activo, valida_hasta")
-        .eq("empresa_id", auth.empresa_id);
-      if (error) {
-        console.error("[greenland-propiedades-summary] promociones:", error.message);
-      } else {
-        promosRaw = data;
-      }
-    } catch (e) {
-      console.error("[greenland-propiedades-summary] promociones throw:", e instanceof Error ? e.message : e);
+    // 2) Propiedades por ciudad (top 12)
+    const porCiudadMap = new Map<string, number>();
+    for (const p of props) {
+      const c = (p.ciudad ?? "").trim() || "Sin ciudad";
+      porCiudadMap.set(c, (porCiudadMap.get(c) ?? 0) + 1);
     }
+    const por_ciudad = Array.from(porCiudadMap.entries())
+      .map(([ciudad, n]) => ({ ciudad, n }))
+      .sort((a, b) => b.n - a.n || a.ciudad.localeCompare(b.ciudad))
+      .slice(0, 12);
 
-    const hoy = new Date();
-    const hoyISO = hoy.toISOString().slice(0, 10);
-    const en7 = new Date(hoy.getTime() + 7 * 86400000).toISOString().slice(0, 10);
-    const en30 = new Date(hoy.getTime() + 30 * 86400000).toISOString().slice(0, 10);
-    const hace30 = new Date(hoy.getTime() - 30 * 86400000).toISOString().slice(0, 10);
-
-    const promos = (Array.isArray(promosRaw) ? promosRaw : []) as Array<{ activo: boolean; valida_hasta: string | null }>;
-    const promosActivas = promos.filter((p) => p.activo);
-    const activasVigentes = promosActivas.filter(
-      (p) => !p.valida_hasta || p.valida_hasta >= hoyISO,
+    // 3) Últimas 6 propiedades cargadas (con foto si tienen)
+    const { data: ultRaw, error: errUlt } = await supabase
+      .from("propiedades")
+      .select("id, titulo, tipo, ciudad, precio, moneda, imagen_path")
+      .eq("empresa_id", auth.empresa_id)
+      .order("created_at", { ascending: false })
+      .limit(6);
+    if (errUlt) {
+      console.error("[greenland-propiedades-summary] ultimas:", errUlt.message);
+    }
+    const ultRows = (ultRaw ?? []) as Array<{
+      id: string; titulo: string; tipo: string | null; ciudad: string | null;
+      precio: number | string | null; moneda: string | null; imagen_path: string | null;
+    }>;
+    const ultimas: GreenPropiedadCard[] = await Promise.all(
+      ultRows.map(async (r) => ({
+        id: r.id,
+        titulo: r.titulo,
+        tipo: r.tipo,
+        ciudad: r.ciudad,
+        precio: r.precio == null ? null : Number(r.precio) || 0,
+        moneda: r.moneda,
+        imagen_url: r.imagen_path ? await signPropiedadImagen(supabase, r.imagen_path, 3600) : null,
+      })),
     );
-    const vencidas30 = promosActivas.filter(
-      (p) => p.valida_hasta && p.valida_hasta < hoyISO && p.valida_hasta >= hace30,
-    ).length;
-    const vencen7 = promosActivas.filter(
-      (p) => p.valida_hasta && p.valida_hasta >= hoyISO && p.valida_hasta <= en7,
-    ).length;
-    const vencen30 = promosActivas.filter(
-      (p) => p.valida_hasta && p.valida_hasta >= hoyISO && p.valida_hasta <= en30,
-    ).length;
-    const sinVencimiento = promosActivas.filter((p) => !p.valida_hasta).length;
 
     const summary: GreenPropiedadesSummary = {
       propiedades: { total, activas, publicadas, destacadas, tasa_publicacion_pct, pct_destacadas, pct_activas },
-      promociones: {
-        activas: activasVigentes.length,
-        vencidas_30d: vencidas30,
-        vencen_7d: vencen7,
-        vencen_30d: vencen30,
-        sin_vencimiento: sinVencimiento,
-      },
+      ultimas,
+      por_ciudad,
     };
 
     return NextResponse.json(successResponse(summary));

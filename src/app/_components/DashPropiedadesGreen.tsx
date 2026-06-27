@@ -1,8 +1,18 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Building, Star, Megaphone, Calendar } from "lucide-react";
+import { Building, Star } from "lucide-react";
 import { fetchWithSupabaseSession } from "@/lib/api/fetch-with-supabase-session";
+
+type Card = {
+  id: string;
+  titulo: string;
+  tipo: string | null;
+  ciudad: string | null;
+  precio: number | null;
+  moneda: string | null;
+  imagen_url: string | null;
+};
 
 type Summary = {
   propiedades: {
@@ -14,16 +24,12 @@ type Summary = {
     pct_destacadas: number;
     pct_activas: number;
   };
-  promociones: {
-    activas: number;
-    vencidas_30d: number;
-    vencen_7d: number;
-    vencen_30d: number;
-    sin_vencimiento: number;
-  };
+  ultimas: Card[];
+  por_ciudad: Array<{ ciudad: string; n: number }>;
 };
 
-const PANEL = "rounded-2xl border border-[#4FAEB2]/45 bg-white p-6 shadow-[0_1px_2px_rgba(15,23,42,0.04)] sm:p-8";
+const PANEL =
+  "rounded-2xl border border-[#4FAEB2]/45 bg-white p-6 shadow-[0_1px_2px_rgba(15,23,42,0.04)] sm:p-8";
 const TEAL = "#4FAEB2";
 
 type KpiTone = "ok" | "info" | "warn" | "muted";
@@ -63,6 +69,16 @@ function KpiCard({
       </div>
     </div>
   );
+}
+
+function fmtPrecio(precio: number | null, moneda: string | null): string {
+  if (precio == null) return "—";
+  const m = moneda || "PYG";
+  try {
+    return new Intl.NumberFormat("es-PY", { style: "currency", currency: m, maximumFractionDigits: 0 }).format(precio);
+  } catch {
+    return `${m} ${precio.toLocaleString("es-PY")}`;
+  }
 }
 
 export default function DashPropiedadesGreen() {
@@ -106,7 +122,8 @@ export default function DashPropiedadesGreen() {
     );
   }
 
-  const { propiedades, promociones } = data;
+  const { propiedades, ultimas, por_ciudad } = data;
+  const maxCiudad = por_ciudad[0]?.n ?? 1;
 
   return (
     <div className="space-y-8">
@@ -133,52 +150,74 @@ export default function DashPropiedadesGreen() {
         />
       </div>
 
-      {/* Promociones — reemplaza la sección "Suscripciones a planes" del original */}
+      {/* Últimas propiedades cargadas */}
       <section className={PANEL}>
         <div className="mb-4 flex items-center gap-2">
           <span aria-hidden="true" className="block h-5 w-1 rounded-full" style={{ backgroundColor: TEAL }} />
           <p className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-600">
             <span aria-hidden="true" className="inline-block h-1.5 w-1.5 rounded-full" style={{ backgroundColor: TEAL }} />
-            Promociones
+            Últimas propiedades cargadas
           </p>
         </div>
-        <p className="mb-5 text-xs text-slate-500">Estado y vencimientos de las ofertas exclusivas mostradas en greenlandpy.com.</p>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
-          <PromoStat label="Activas vigentes" value={promociones.activas} icon={<Megaphone className="h-4 w-4" />} tone="ok" />
-          <PromoStat label="Vencen en 7 días" value={promociones.vencen_7d} icon={<Calendar className="h-4 w-4" />} tone="warn" />
-          <PromoStat label="Vencen en 30 días" value={promociones.vencen_30d} icon={<Calendar className="h-4 w-4" />} tone="info" />
-          <PromoStat label="Sin vencimiento" value={promociones.sin_vencimiento} icon={<Calendar className="h-4 w-4" />} tone="muted" />
-          <PromoStat label="Vencidas (30d)" value={promociones.vencidas_30d} icon={<Calendar className="h-4 w-4" />} tone="danger" />
-        </div>
+        {ultimas.length === 0 ? (
+          <p className="py-8 text-center text-sm text-slate-400">Sin propiedades cargadas todavía.</p>
+        ) : (
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {ultimas.map((p) => (
+              <article key={p.id} className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+                <div className="flex h-44 items-center justify-center bg-slate-50">
+                  {p.imagen_url ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={p.imagen_url} alt={p.titulo} className="h-full w-full object-cover" />
+                  ) : (
+                    <span className="text-sm text-slate-400">sin foto</span>
+                  )}
+                </div>
+                <div className="space-y-1 p-3">
+                  <p className="truncate font-semibold text-slate-900">{p.titulo}</p>
+                  <p className="text-xs text-slate-500">
+                    {[p.tipo, p.ciudad].filter(Boolean).join(" · ") || "—"}
+                  </p>
+                  <p className="pt-1 text-sm font-bold tabular-nums text-[#3F8E91]">{fmtPrecio(p.precio, p.moneda)}</p>
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
       </section>
-    </div>
-  );
-}
 
-type PromoTone = "ok" | "warn" | "info" | "muted" | "danger";
-
-function PromoStat({
-  label, value, icon, tone,
-}: {
-  label: string;
-  value: number;
-  icon: React.ReactNode;
-  tone: PromoTone;
-}) {
-  const toneBg: Record<PromoTone, string> = {
-    ok: "bg-emerald-50 text-emerald-700 ring-emerald-100",
-    warn: "bg-amber-50 text-amber-700 ring-amber-100",
-    info: "bg-sky-50 text-sky-700 ring-sky-100",
-    muted: "bg-slate-50 text-slate-600 ring-slate-100",
-    danger: "bg-rose-50 text-rose-700 ring-rose-100",
-  };
-  return (
-    <div className={`rounded-xl p-3 ring-1 ${toneBg[tone]}`}>
-      <div className="mb-1 flex items-center justify-between">
-        <p className="text-[10px] font-semibold uppercase tracking-[0.14em]">{label}</p>
-        {icon}
-      </div>
-      <p className="text-2xl font-bold tabular-nums">{value}</p>
+      {/* Propiedades por ciudad */}
+      <section className={PANEL}>
+        <div className="mb-1 flex items-center gap-2">
+          <span aria-hidden="true" className="block h-5 w-1 rounded-full" style={{ backgroundColor: TEAL }} />
+          <p className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-600">
+            <span aria-hidden="true" className="inline-block h-1.5 w-1.5 rounded-full" style={{ backgroundColor: TEAL }} />
+            Propiedades por ciudad
+          </p>
+        </div>
+        <p className="mb-5 text-xs text-slate-500">Top 12 ciudades con más propiedades</p>
+        {por_ciudad.length === 0 ? (
+          <p className="py-8 text-center text-sm text-slate-400">Sin datos.</p>
+        ) : (
+          <ul className="space-y-2.5">
+            {por_ciudad.map((c) => {
+              const pct = Math.max(6, Math.round((c.n / maxCiudad) * 100));
+              return (
+                <li key={c.ciudad} className="flex items-center gap-3">
+                  <span className="w-32 shrink-0 truncate text-sm text-slate-700">{c.ciudad}</span>
+                  <div className="relative h-3 flex-1 overflow-hidden rounded-full bg-slate-100">
+                    <span
+                      className="absolute left-0 top-0 h-full rounded-full"
+                      style={{ width: `${pct}%`, backgroundColor: TEAL, opacity: 0.85 }}
+                    />
+                  </div>
+                  <span className="w-8 shrink-0 text-right text-sm font-semibold tabular-nums text-slate-700">{c.n}</span>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </section>
     </div>
   );
 }
