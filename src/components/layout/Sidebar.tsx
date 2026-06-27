@@ -99,6 +99,7 @@ export const ALLOWED_MENU_KEYS = new Set<string>([
   "propiedades",
   "reportes",
   "testimonios",
+  "configuracion",
 ]);
 
 const MENU_STRUCTURE: MenuItem[] = [
