@@ -6,6 +6,7 @@ import { motion } from "framer-motion";
 // MobileDashboard se renderiza solo en mobile (md:hidden). El dashboard desktop
 // que vive en este mismo archivo queda intacto.
 import MobileDashboard from "@/app/_components/MobileDashboard";
+import DashPropiedadesGreen from "@/app/_components/DashPropiedadesGreen";
 import CobranzasResumenCards from "@/components/cobros/CobranzasResumenCards";
 import StockMuertoCard from "@/components/dashboard/StockMuertoCard";
 import CuentasPorPagarCard from "@/components/dashboard/CuentasPorPagarCard";
@@ -1921,7 +1922,7 @@ const PERIODO_OPTS: { id: Periodo; label: string }[] = [
   { id: "anio", label: "Año"       },
 ];
 
-const TAB_VALID: TabDash[] = ["comercial", "financiero", "inventario", "ventas"];
+const TAB_VALID: TabDash[] = ["comercial", "financiero", "inventario", "ventas", "propiedades"];
 
 type DashScope =
   | { kind: "pending" }
@@ -2061,10 +2062,10 @@ export default function DashboardPage() {
   const mapNombreTipoServicio = useMapNombreTipoServicioCatalogo(clientes);
   const nivel = usuarioActivo?.nivel ?? "administrador";
 
-  // Instancia En lo de Mari: solo Ventas / Inventario / Financiero (sin Comercial/CRM/Pipeline).
-  const MARI_ALLOWED_TABS: TabDash[] = ["ventas", "inventario", "financiero"];
+  // Green Land: Ventas / Financiero / Propiedades (sin Inventario, sin Comercial).
+  const GREEN_ALLOWED_TABS: TabDash[] = ["ventas", "financiero", "propiedades"];
   const rawTabs: TabDash[] = dashScope.kind === "scoped" ? dashScope.tabs : TAB_VALID;
-  const effectiveTabs: TabDash[] = rawTabs.filter((t) => MARI_ALLOWED_TABS.includes(t));
+  const effectiveTabs: TabDash[] = rawTabs.filter((t) => GREEN_ALLOWED_TABS.includes(t));
   const showTabNav = effectiveTabs.length > 1;
 
   // Si el tab actual no está permitido, redirigir al primero permitido.
@@ -2082,6 +2083,7 @@ export default function DashboardPage() {
     financiero: { label: "Financiero" },
     inventario: { label: "Inventario" },
     ventas: { label: "Ventas" },
+    propiedades: { label: "Propiedades" },
   };
 
   if (!config) {
@@ -2312,6 +2314,8 @@ export default function DashboardPage() {
           periodo={periodo}
         />
       )}
+
+      {tab === "propiedades" && <DashPropiedadesGreen />}
 
     </div>
     </>
