@@ -92,6 +92,7 @@ function adminEmpresasMatchesQuery(queryRaw: string): boolean {
  * Mantener sincronizado si se piden nuevos módulos visibles para esta instancia.
  */
 export const ALLOWED_MENU_KEYS = new Set<string>([
+  "dashboard",
   "ventas",
   "clientes",
   "promociones",
