@@ -32,22 +32,33 @@ export async function GET(request: NextRequest) {
       .from("propiedades")
       .select("activo, visible_web, destacada")
       .eq("empresa_id", auth.empresa_id);
-    if (errProps) return NextResponse.json(errorResponse(errProps.message), { status: 400 });
+    if (errProps) {
+      console.error("[greenland-propiedades-summary] propiedades:", errProps.message);
+    }
 
-    const props = (propsRaw ?? []) as Array<{ activo: boolean; visible_web: boolean; destacada: boolean }>;
+    const props = (propsRaw ?? []) as Array<{ activo: boolean; visible_web: boolean | null; destacada: boolean }>;
     const total = props.length;
     const activas = props.filter((p) => p.activo).length;
-    const publicadas = props.filter((p) => p.activo && p.visible_web).length;
+    const publicadas = props.filter((p) => p.activo && p.visible_web !== false).length;
     const destacadas = props.filter((p) => p.destacada).length;
     const tasa_publicacion_pct = total > 0 ? Math.round((publicadas / total) * 100) : 0;
     const pct_destacadas = total > 0 ? Math.round((destacadas / total) * 100) : 0;
     const pct_activas = total > 0 ? Math.round((activas / total) * 100) : 0;
 
-    const { data: promosRaw, error: errPromos } = await supabase
-      .from("promociones")
-      .select("activo, valida_hasta")
-      .eq("empresa_id", auth.empresa_id);
-    if (errPromos) return NextResponse.json(errorResponse(errPromos.message), { status: 400 });
+    let promosRaw: unknown = null;
+    try {
+      const { data, error } = await supabase
+        .from("promociones")
+        .select("activo, valida_hasta")
+        .eq("empresa_id", auth.empresa_id);
+      if (error) {
+        console.error("[greenland-propiedades-summary] promociones:", error.message);
+      } else {
+        promosRaw = data;
+      }
+    } catch (e) {
+      console.error("[greenland-propiedades-summary] promociones throw:", e instanceof Error ? e.message : e);
+    }
 
     const hoy = new Date();
     const hoyISO = hoy.toISOString().slice(0, 10);
@@ -55,7 +66,7 @@ export async function GET(request: NextRequest) {
     const en30 = new Date(hoy.getTime() + 30 * 86400000).toISOString().slice(0, 10);
     const hace30 = new Date(hoy.getTime() - 30 * 86400000).toISOString().slice(0, 10);
 
-    const promos = (promosRaw ?? []) as Array<{ activo: boolean; valida_hasta: string | null }>;
+    const promos = (Array.isArray(promosRaw) ? promosRaw : []) as Array<{ activo: boolean; valida_hasta: string | null }>;
     const promosActivas = promos.filter((p) => p.activo);
     const activasVigentes = promosActivas.filter(
       (p) => !p.valida_hasta || p.valida_hasta >= hoyISO,
