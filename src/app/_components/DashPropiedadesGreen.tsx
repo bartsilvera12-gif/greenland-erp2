@@ -26,15 +26,17 @@ type Summary = {
 const PANEL = "rounded-2xl border border-[#4FAEB2]/45 bg-white p-6 shadow-[0_1px_2px_rgba(15,23,42,0.04)] sm:p-8";
 const TEAL = "#4FAEB2";
 
+type KpiTone = "ok" | "info" | "warn" | "muted";
+
 function KpiCard({
   label, value, icon, stats,
 }: {
   label: string;
   value: string | number;
   icon: React.ReactNode;
-  stats: Array<{ label: string; value: number | string; tone?: "ok" | "info" | "warn" | "muted" }>;
+  stats: Array<{ label: string; value: number | string; tone?: KpiTone }>;
 }) {
-  const toneClass: Record<NonNullable<typeof stats[0]["tone"]>, string> = {
+  const toneClass: Record<KpiTone, string> = {
     ok: "bg-emerald-50 text-emerald-700",
     info: "bg-sky-50 text-sky-700",
     warn: "bg-amber-50 text-amber-700",
@@ -153,15 +155,17 @@ export default function DashPropiedadesGreen() {
   );
 }
 
+type PromoTone = "ok" | "warn" | "info" | "muted" | "danger";
+
 function PromoStat({
   label, value, icon, tone,
 }: {
   label: string;
   value: number;
   icon: React.ReactNode;
-  tone: "ok" | "warn" | "info" | "muted" | "danger";
+  tone: PromoTone;
 }) {
-  const toneBg: Record<typeof tone, string> = {
+  const toneBg: Record<PromoTone, string> = {
     ok: "bg-emerald-50 text-emerald-700 ring-emerald-100",
     warn: "bg-amber-50 text-amber-700 ring-amber-100",
     info: "bg-sky-50 text-sky-700 ring-sky-100",
