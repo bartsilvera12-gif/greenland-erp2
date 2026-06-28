@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Plus, Pencil, Trash2, Star, ImagePlus } from "lucide-react";
 import { fetchWithSupabaseSession } from "@/lib/api/fetch-with-supabase-session";
+import ConfirmModal from "@/components/ui/ConfirmModal";
 
 type Testimonio = {
   id: string;
@@ -37,6 +38,8 @@ export default function TestimoniosPage() {
   const [editing, setEditing] = useState<FormState | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [toDelete, setToDelete] = useState<Testimonio | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -96,10 +99,18 @@ export default function TestimoniosPage() {
     }
   }
 
-  async function remove(id: string) {
-    if (!confirm("¿Eliminar este testimonio?")) return;
-    const res = await fetchWithSupabaseSession(`/api/testimonios/${id}`, { method: "DELETE" });
-    if (res.ok) await load();
+  async function confirmDelete() {
+    if (!toDelete) return;
+    setDeleting(true);
+    try {
+      const res = await fetchWithSupabaseSession(`/api/testimonios/${toDelete.id}`, { method: "DELETE" });
+      if (res.ok) {
+        setToDelete(null);
+        await load();
+      }
+    } finally {
+      setDeleting(false);
+    }
   }
 
   return (
@@ -175,7 +186,7 @@ export default function TestimoniosPage() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => remove(t.id)}
+                    onClick={() => setToDelete(t)}
                     className="rounded-md bg-red-50 p-1.5 text-red-600 hover:bg-red-100"
                     title="Eliminar"
                   >
@@ -271,6 +282,18 @@ export default function TestimoniosPage() {
           </div>
         </div>
       ) : null}
+
+      <ConfirmModal
+        open={!!toDelete}
+        title="Eliminar testimonio"
+        message={toDelete ? `¿Eliminar el testimonio de "${toDelete.autor}"?` : ""}
+        hint="Esta acción no se puede deshacer."
+        confirmLabel="Eliminar"
+        variant="danger"
+        loading={deleting}
+        onConfirm={confirmDelete}
+        onClose={() => !deleting && setToDelete(null)}
+      />
     </div>
   );
 }

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Plus, Pencil, Trash2, ImagePlus, Calendar } from "lucide-react";
 import { fetchWithSupabaseSession } from "@/lib/api/fetch-with-supabase-session";
+import ConfirmModal from "@/components/ui/ConfirmModal";
 
 type Promocion = {
   id: string;
@@ -48,6 +49,8 @@ export default function PromocionesPage() {
   const [editing, setEditing] = useState<FormState | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [toDelete, setToDelete] = useState<Promocion | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -108,10 +111,18 @@ export default function PromocionesPage() {
     }
   }
 
-  async function remove(id: string) {
-    if (!confirm("¿Eliminar esta promoción?")) return;
-    const res = await fetchWithSupabaseSession(`/api/promociones/${id}`, { method: "DELETE" });
-    if (res.ok) await load();
+  async function confirmDelete() {
+    if (!toDelete) return;
+    setDeleting(true);
+    try {
+      const res = await fetchWithSupabaseSession(`/api/promociones/${toDelete.id}`, { method: "DELETE" });
+      if (res.ok) {
+        setToDelete(null);
+        await load();
+      }
+    } finally {
+      setDeleting(false);
+    }
   }
 
   return (
@@ -194,7 +205,7 @@ export default function PromocionesPage() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => remove(p.id)}
+                      onClick={() => setToDelete(p)}
                       className="rounded-md bg-red-50 p-1.5 text-red-600 hover:bg-red-100"
                       title="Eliminar"
                     >
@@ -294,6 +305,18 @@ export default function PromocionesPage() {
           </div>
         </div>
       ) : null}
+
+      <ConfirmModal
+        open={!!toDelete}
+        title="Eliminar promoción"
+        message={toDelete ? `¿Eliminar la promoción "${toDelete.titulo}"?` : ""}
+        hint="Esta acción no se puede deshacer."
+        confirmLabel="Eliminar"
+        variant="danger"
+        loading={deleting}
+        onConfirm={confirmDelete}
+        onClose={() => !deleting && setToDelete(null)}
+      />
     </div>
   );
 }
