@@ -37,6 +37,14 @@ export default function NuevaPropiedadPage() {
         destacada: values.destacada,
         visible_web: values.visible_web,
         activo: values.activo,
+        modalidad: values.modalidad || null,
+        cuotas_cantidad: values.cuotas_cantidad,
+        cuota_monto: values.cuota_monto,
+        servicios: values.servicios,
+        medidas: values.medidas,
+        finca: values.finca || null,
+        padron: values.padron || null,
+        cuenta_catastral: values.cuenta_catastral || null,
       });
       router.push(`/propiedades/${propiedad.id}`);
     } catch (e) {

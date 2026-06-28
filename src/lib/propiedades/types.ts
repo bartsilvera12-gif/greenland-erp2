@@ -49,7 +49,7 @@ export interface Propiedad {
   cuotas_cantidad?: number | null;
   cuota_monto?: number | null;
   servicios?: string[] | null;
-  medidas?: Record<string, { m?: number; linda?: string }> | null;
+  medidas?: Record<string, { m?: number | null; linda?: string | null; calle?: string | null }> | null;
   finca?: string | null;
   padron?: string | null;
   cuenta_catastral?: string | null;

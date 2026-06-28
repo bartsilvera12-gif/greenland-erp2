@@ -10,6 +10,7 @@ export default function EditPropiedadPage({ params }: { params: Promise<{ id: st
   const { id } = use(params);
   const router = useRouter();
   const [initial, setInitial] = useState<PropiedadFormValues | null>(null);
+  const [initialImageUrl, setInitialImageUrl] = useState<string | null>(null);
   const [notFound, setNotFound] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -20,6 +21,12 @@ export default function EditPropiedadPage({ params }: { params: Promise<{ id: st
         setNotFound(true);
         return;
       }
+      const m = (p.medidas ?? {}) as Record<string, { m?: number | null; linda?: string | null; calle?: string | null } | undefined>;
+      const medDir = (k: "norte" | "sur" | "este" | "oeste") => ({
+        m: m[k]?.m ?? null,
+        linda: m[k]?.linda ?? "",
+        calle: m[k]?.calle ?? "",
+      });
       setInitial({
         codigo: p.codigo ?? "",
         titulo: p.titulo,
@@ -42,7 +49,16 @@ export default function EditPropiedadPage({ params }: { params: Promise<{ id: st
         destacada: p.destacada,
         visible_web: p.visible_web,
         activo: p.activo,
+        modalidad: p.modalidad ?? "",
+        cuotas_cantidad: p.cuotas_cantidad ?? null,
+        cuota_monto: p.cuota_monto ?? null,
+        servicios: Array.isArray(p.servicios) ? p.servicios : [],
+        medidas: { norte: medDir("norte"), sur: medDir("sur"), este: medDir("este"), oeste: medDir("oeste") },
+        finca: p.finca ?? "",
+        padron: p.padron ?? "",
+        cuenta_catastral: p.cuenta_catastral ?? "",
       });
+      setInitialImageUrl(p.imagen_url ?? null);
     });
   }, [id]);
 
@@ -72,6 +88,14 @@ export default function EditPropiedadPage({ params }: { params: Promise<{ id: st
         destacada: values.destacada,
         visible_web: values.visible_web,
         activo: values.activo,
+        modalidad: values.modalidad || null,
+        cuotas_cantidad: values.cuotas_cantidad,
+        cuota_monto: values.cuota_monto,
+        servicios: values.servicios,
+        medidas: values.medidas,
+        finca: values.finca || null,
+        padron: values.padron || null,
+        cuenta_catastral: values.cuenta_catastral || null,
       });
       router.push(`/propiedades/${id}`);
     } catch (e) {
@@ -115,6 +139,8 @@ export default function EditPropiedadPage({ params }: { params: Promise<{ id: st
         submitting={saving}
         onSubmit={handleSubmit}
         submitLabel="Guardar cambios"
+        propiedadId={id}
+        initialImageUrl={initialImageUrl}
       />
     </div>
   );

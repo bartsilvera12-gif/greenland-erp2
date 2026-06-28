@@ -81,7 +81,7 @@ function rowToPropiedad(row: SupabaseRow): Propiedad {
     cuota_monto: toNum(row.cuota_monto ?? null),
     servicios: Array.isArray(row.servicios) ? (row.servicios as string[]) : [],
     medidas: (row.medidas && typeof row.medidas === "object")
-      ? (row.medidas as Record<string, { m?: number; linda?: string }>)
+      ? (row.medidas as Record<string, { m?: number | null; linda?: string | null; calle?: string | null }>)
       : {},
     finca: row.finca ?? null,
     padron: row.padron ?? null,
