@@ -98,6 +98,20 @@ function toNum(v: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+/** Formatea un número con separadores de miles es-PY. Devuelve "" si null. */
+function fmtMiles(n: number | null): string {
+  if (n == null) return "";
+  return Math.round(n).toLocaleString("es-PY");
+}
+
+/** Parsea un string con o sin separadores de miles a number | null. */
+function parseMiles(v: string): number | null {
+  const clean = v.replace(/[^\d-]/g, "");
+  if (!clean) return null;
+  const n = Number(clean);
+  return Number.isFinite(n) ? n : null;
+}
+
 export default function PropiedadForm({
   initial,
   submitting,
@@ -291,11 +305,12 @@ export default function PropiedadForm({
           <div>
             <label className={labelClass}>Precio</label>
             <input
-              type="number"
-              step="any"
+              type="text"
+              inputMode="numeric"
               className={inputClass}
-              value={values.precio ?? ""}
-              onChange={(e) => up("precio", toNum(e.target.value))}
+              value={fmtMiles(values.precio)}
+              onChange={(e) => up("precio", parseMiles(e.target.value))}
+              placeholder="0"
             />
           </div>
           <div>
@@ -500,11 +515,12 @@ export default function PropiedadForm({
           <div>
             <label className={labelClass}>Monto por cuota</label>
             <input
-              type="number"
-              step="any"
+              type="text"
+              inputMode="numeric"
               className={inputClass}
-              value={values.cuota_monto ?? ""}
-              onChange={(e) => up("cuota_monto", toNum(e.target.value))}
+              value={fmtMiles(values.cuota_monto)}
+              onChange={(e) => up("cuota_monto", parseMiles(e.target.value))}
+              placeholder="0"
             />
           </div>
         </div>
