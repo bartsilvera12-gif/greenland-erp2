@@ -282,26 +282,6 @@ export default function PropiedadForm({
               onChange={(e) => up("direccion", e.target.value)}
             />
           </div>
-          <div>
-            <label className={labelClass}>Latitud</label>
-            <input
-              type="number"
-              step="any"
-              className={inputClass}
-              value={values.lat ?? ""}
-              onChange={(e) => up("lat", toNum(e.target.value))}
-            />
-          </div>
-          <div>
-            <label className={labelClass}>Longitud</label>
-            <input
-              type="number"
-              step="any"
-              className={inputClass}
-              value={values.lng ?? ""}
-              onChange={(e) => up("lng", toNum(e.target.value))}
-            />
-          </div>
         </div>
       </section>
 
