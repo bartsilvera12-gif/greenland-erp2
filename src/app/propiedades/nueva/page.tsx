@@ -10,6 +10,7 @@ export default function NuevaPropiedadPage() {
   const router = useRouter();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [stagedFile, setStagedFile] = useState<File | null>(null);
 
   async function handleSubmit(values: PropiedadFormValues) {
     setSaving(true);
@@ -46,6 +47,23 @@ export default function NuevaPropiedadPage() {
         padron: values.padron || null,
         cuenta_catastral: values.cuenta_catastral || null,
       });
+
+      // Si el usuario eligio una foto antes de guardar, la subimos ahora que
+      // tenemos id. No bloquea la navegacion si falla.
+      if (stagedFile) {
+        try {
+          const form = new FormData();
+          form.append("file", stagedFile);
+          await fetch(`/api/propiedades/${propiedad.id}/imagen`, {
+            method: "POST",
+            body: form,
+            credentials: "include",
+          });
+        } catch {
+          /* la propiedad ya esta creada; el usuario puede reintentar desde editar */
+        }
+      }
+
       router.push(`/propiedades/${propiedad.id}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error al guardar");
@@ -73,6 +91,7 @@ export default function NuevaPropiedadPage() {
         submitting={saving}
         onSubmit={handleSubmit}
         submitLabel="Crear propiedad"
+        onStageFile={setStagedFile}
       />
     </div>
   );

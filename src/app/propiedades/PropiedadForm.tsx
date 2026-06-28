@@ -119,6 +119,7 @@ export default function PropiedadForm({
   submitLabel,
   propiedadId,
   initialImageUrl,
+  onStageFile,
 }: {
   initial: PropiedadFormValues;
   submitting: boolean;
@@ -127,10 +128,14 @@ export default function PropiedadForm({
   /** Si se pasa, se habilita el upload de foto contra /api/propiedades/[id]/imagen */
   propiedadId?: string;
   initialImageUrl?: string | null;
+  /** Para /nueva: permite elegir una foto antes de guardar. El padre la sube
+   *  apenas se crea la propiedad. */
+  onStageFile?: (file: File | null) => void;
 }) {
   const [values, setValues] = useState<PropiedadFormValues>(initial);
   const [imageUrl, setImageUrl] = useState<string | null>(initialImageUrl ?? null);
   const [uploadingImg, setUploadingImg] = useState(false);
+  const [stagedPreview, setStagedPreview] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   function up<K extends keyof PropiedadFormValues>(key: K, val: PropiedadFormValues[K]) {
@@ -411,53 +416,65 @@ export default function PropiedadForm({
       {/* Foto de portada */}
       <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
         <h2 className="mb-3 text-sm font-semibold text-slate-800">Foto de portada</h2>
-        {propiedadId ? (
-          <div className="flex items-center gap-4">
-            <div className="h-24 w-32 shrink-0 overflow-hidden rounded-lg border border-slate-200 bg-slate-100">
-              {imageUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={imageUrl} alt="" className="h-full w-full object-cover" />
-              ) : (
-                <div className="flex h-full w-full items-center justify-center text-slate-400">
-                  <ImagePlus className="h-7 w-7" />
-                </div>
-              )}
-            </div>
-            <div className="flex flex-col gap-2">
+        <div className="flex items-center gap-4">
+          <div className="h-24 w-32 shrink-0 overflow-hidden rounded-lg border border-slate-200 bg-slate-100">
+            {imageUrl || stagedPreview ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={(imageUrl ?? stagedPreview) as string} alt="" className="h-full w-full object-cover" />
+            ) : (
+              <div className="flex h-full w-full items-center justify-center text-slate-400">
+                <ImagePlus className="h-7 w-7" />
+              </div>
+            )}
+          </div>
+          <div className="flex flex-col gap-2">
+            <button
+              type="button"
+              onClick={() => fileRef.current?.click()}
+              disabled={uploadingImg}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-[#4FAEB2] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#3F8E91] disabled:opacity-50"
+            >
+              {uploadingImg ? "Subiendo…" : (imageUrl || stagedPreview) ? "Cambiar foto" : "Subir foto"}
+            </button>
+            {(imageUrl || stagedPreview) ? (
               <button
                 type="button"
-                onClick={() => fileRef.current?.click()}
-                disabled={uploadingImg}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-[#4FAEB2] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#3F8E91] disabled:opacity-50"
-              >
-                {uploadingImg ? "Subiendo…" : imageUrl ? "Cambiar foto" : "Subir foto"}
-              </button>
-              {imageUrl ? (
-                <button
-                  type="button"
-                  onClick={removeFoto}
-                  disabled={uploadingImg}
-                  className="text-xs text-red-600 hover:underline disabled:opacity-50"
-                >
-                  Quitar
-                </button>
-              ) : null}
-              <input
-                ref={fileRef}
-                type="file"
-                accept="image/jpeg,image/png,image/webp"
-                className="hidden"
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  if (f) void uploadFoto(f);
+                onClick={() => {
+                  if (propiedadId && imageUrl) void removeFoto();
+                  else {
+                    setStagedPreview(null);
+                    onStageFile?.(null);
+                  }
                 }}
-              />
-              <p className="text-[11px] text-slate-400">JPG, PNG o WebP · máx. 5 MB</p>
-            </div>
+                disabled={uploadingImg}
+                className="text-xs text-red-600 hover:underline disabled:opacity-50"
+              >
+                Quitar
+              </button>
+            ) : null}
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (!f) return;
+                if (propiedadId) {
+                  void uploadFoto(f);
+                } else {
+                  // /nueva: stage en memoria del padre, preview local
+                  setStagedPreview(URL.createObjectURL(f));
+                  onStageFile?.(f);
+                }
+              }}
+            />
+            <p className="text-[11px] text-slate-400">JPG, PNG o WebP · máx. 5 MB</p>
+            {!propiedadId && stagedPreview ? (
+              <p className="text-[11px] text-emerald-700">Se subirá al guardar la propiedad.</p>
+            ) : null}
           </div>
-        ) : (
-          <p className="text-xs text-slate-500">Guardá la propiedad primero, después podrás subir la foto desde acá.</p>
-        )}
+        </div>
       </section>
 
       {/* Servicios e infraestructura */}
