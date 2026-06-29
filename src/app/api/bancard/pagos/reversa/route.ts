@@ -7,13 +7,14 @@ export const dynamic = "force-dynamic";
 export async function OPTIONS() { return corsPreflight(); }
 
 /**
- * POST /api/public/pagos/reversa
+ * POST /api/bancard/pagos/reversa
  *
  * Anula un pago previamente aplicado y restablece el saldo de la cuenta.
  *
  * Headers:
- *   X-Api-Key: <EXTERNAL_PAYMENT_API_KEY>
- *   X-Partner-Id: <opcional>
+ *   X-Api-Key:     <EXTERNAL_PAYMENT_API_KEY>
+ *   X-Partner-Id:  bancard
+ *   Content-Type:  application/json
  *
  * Body JSON:
  *   { "transaccion_id": "EXT-12345" }

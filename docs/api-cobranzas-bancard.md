@@ -8,45 +8,60 @@ Integración para **Bancard / Red Infonet Cobranzas**.
 - **Moneda:** Solo PYG (guaraníes)
 - **Pagos parciales:** Sí, monto mínimo Gs. 10.000
 - **Base URL producción:** `https://greenland.neura.com.py`
-- **Base URL staging:** _(misma; sin staging separado por ahora)_
 
 ---
 
 ## Autenticación
 
-Para los métodos **Pago** y **Reversa** se valida un API key en el header.
+**Los 3 métodos requieren los siguientes headers:**
 
-```
-X-Api-Key:     <clave compartida — la entregamos por canal seguro>
-X-Partner-Id:  bancard           ← identifica al partner en logs
-Content-Type:  application/json
-```
+| Header | Valor | Notas |
+|---|---|---|
+| `X-Api-Key` | _(clave compartida)_ | Se entrega por canal seguro |
+| `X-Partner-Id` | `bancard` | Identifica al partner para audit |
+| `Content-Type` | `application/json` | Todos los endpoints reciben JSON |
 
-El **método Consulta es público** (no requiere API key).
+Errores comunes de auth:
+
+| HTTP | Cuándo |
+|---|---|
+| `401 Falta token` | No vino el header `X-Api-Key` |
+| `401 API key inválida` | Vino pero no matchea el secret |
+| `500 EXTERNAL_PAYMENT_API_KEY no configurada` | Servidor sin la env var seteada |
 
 ---
 
 ## 1. Consulta de deudas
 
 ```
-GET /api/public/mis-pagos?ci=<documento>
-GET /api/public/mis-pagos?ruc=<ruc>
+POST /api/bancard/deudas/consultar
 ```
 
-Devuelve datos del cliente + resumen de saldo + listado de cuotas pendientes.
+### Request body
 
-### Request
+```json
+{
+  "tipo_documento": "ci",
+  "documento": "1111111"
+}
+```
 
-| Parámetro | Tipo | Requerido | Descripción |
-|---|---|---|---|
-| `ci`  | string | uno de los dos | Cédula de identidad |
-| `ruc` | string | uno de los dos | RUC |
+O por RUC:
 
-### Response (200)
+```json
+{
+  "tipo_documento": "ruc",
+  "documento": "80012345-6"
+}
+```
+
+### Response (200) — cliente encontrado
 
 ```json
 {
   "success": true,
+  "partner_id": "bancard",
+  "tipo_documento": "ci",
   "data": {
     "cliente": {
       "id": "uuid",
@@ -76,43 +91,69 @@ Devuelve datos del cliente + resumen de saldo + listado de cuotas pendientes.
         "total": 1500000,
         "pagado": 0,
         "saldo": 1500000,
-        "estado": "pendiente",       // pagado | parcial | pendiente | vencido
+        "estado": "pendiente",
         "dias_mora": 0,
-        "interes": 0,                // reservado para futuro
-        "multa": 0                   // reservado para futuro
+        "interes": 0,
+        "multa": 0
       }
     ]
   }
 }
 ```
 
-Si el cliente no existe → `200` con `cliente: null` y `cuotas: []`.
+Cliente no encontrado o sin deudas → `200` con `data.cliente = null` y `data.cuotas = []`.
+
+### Errores
+
+| HTTP | Caso |
+|---|---|
+| `400` | `tipo_documento` distinto de `ci`/`ruc`, o `documento` menor a 4 chars |
+| `401` | API key inválida o ausente |
+
+### Valores de `estado` de cada cuota
+
+| Estado | Significado |
+|---|---|
+| `pagado` | saldo = 0 |
+| `vencido` | saldo > 0 y fecha_vencimiento < hoy |
+| `parcial` | saldo > 0 pero ya recibió algún pago |
+| `pendiente` | saldo > 0, todavía no vencida, sin pagos |
 
 ---
 
 ## 2. Aplicar pago
 
 ```
-POST /api/public/pagos
+POST /api/bancard/pagos
 ```
 
-Aplica un cobro contra una cuota específica. **Idempotente** por `transaccion_id`.
+Idempotente por `transaccion_id` del partner.
 
 ### Request body
 
 ```json
 {
-  "transaccion_id": "BNC-2026-001234",      // requerido, único por partner
-  "numero_venta":   "BNC-TEST-001",         // requerido, número exacto de la cuota
-  "monto":          1500000,                 // requerido, > 0, ≤ saldo pendiente
-  "moneda":         "GS",                    // opcional, default GS
-  "fecha_pago":     "2026-06-29T15:30:00Z",  // opcional, default servidor
-  "metodo":         "efectivo",              // opcional: efectivo | transferencia | tarjeta | otro
-  "referencia":     "Pago boca 4521"         // opcional, max 200 chars
+  "transaccion_id": "BNC-2026-001234",
+  "numero_venta":   "BNC-TEST-001",
+  "monto":          1500000,
+  "moneda":         "GS",
+  "fecha_pago":     "2026-06-29T15:30:00Z",
+  "metodo":         "transferencia",
+  "referencia":     "Pago boca Infonet Asunción"
 }
 ```
 
-### Response (200) — aplicado
+| Campo | Tipo | Requerido | Descripción |
+|---|---|---|---|
+| `transaccion_id` | string | sí | ID de la transacción en Bancard, usado como idempotency key. Max 80 chars |
+| `numero_venta` | string | sí | Identificador de la cuota a pagar (viene en la consulta como `cuotas[].numero`) |
+| `monto` | number | sí | Monto en PYG. Debe ser > 0 y ≤ saldo pendiente. Permite pago parcial |
+| `moneda` | string | no | `GS` (default) o `USD` |
+| `fecha_pago` | ISO 8601 | no | Default: hora del servidor |
+| `metodo` | string | no | `efectivo` \| `transferencia` (default) \| `tarjeta` \| `otro` |
+| `referencia` | string | no | Texto libre. Max 200 chars |
+
+### Response (200) — aplicado exitosamente
 
 ```json
 {
@@ -123,51 +164,51 @@ Aplica un cobro contra una cuota específica. **Idempotente** por `transaccion_i
     "cobro_id":         "uuid",
     "monto":            1500000,
     "saldo_restante":   0,
-    "estado_cuenta":    "pagado",         // pendiente | parcial | pagado
+    "estado_cuenta":    "pagado",
     "applied_at":       "2026-06-29T15:30:00Z"
   }
 }
 ```
 
-### Response (200) — idempotente (mismo `transaccion_id`)
+### Response (200) — idempotente (reintento con mismo `transaccion_id`)
 
 ```json
 {
   "success": true,
   "ya_aplicado": true,
-  "data": { ... mismo shape ... }
+  "data": { /* mismo shape que el caso anterior */ }
 }
 ```
 
 ### Errores
 
-| Código | Cuándo |
+| HTTP | Caso |
 |---|---|
-| `400` | Falta `transaccion_id`/`numero_venta`/`monto`, monto ≤ 0, cuenta anulada o ya pagada, monto > saldo |
-| `401` | Falta `X-Api-Key` o es inválida |
+| `400` | Falta `transaccion_id`/`numero_venta`/`monto`; monto ≤ 0; cuenta anulada o ya pagada; monto > saldo |
+| `401` | API key inválida o ausente |
 | `404` | `numero_venta` no encontrado |
-| `409` | Mismo `transaccion_id` ya existe con otro monto/cuota |
-| `409` | Pago previamente reversado — usar nuevo `transaccion_id` |
+| `409` | Mismo `transaccion_id` ya existe pero con monto/cuota distintos |
+| `409` | Pago previamente reversado — usar `transaccion_id` nuevo |
 
 ---
 
 ## 3. Reversa de pago
 
 ```
-POST /api/public/pagos/reversa
+POST /api/bancard/pagos/reversa
 ```
 
-Anula un pago previamente aplicado (caso timeout/error). **Idempotente**.
+Anula un pago previamente aplicado y **restaura el saldo** de la cuota para que vuelva a ser consultable y pagable. Idempotente.
+
+> **Importante:** según la observación del correo de Bancard, este método sirve solo para casos donde falló algo posterior al cobro (timeout/error). NO sirve para anular un pago ya liquidado a la cuenta — esos van por el flujo operativo con el equipo de Anulaciones de Bancard.
 
 ### Request body
 
 ```json
-{
-  "transaccion_id": "BNC-2026-001234"
-}
+{ "transaccion_id": "BNC-2026-001234" }
 ```
 
-### Response (200)
+### Response (200) — reversado
 
 ```json
 {
@@ -182,60 +223,119 @@ Anula un pago previamente aplicado (caso timeout/error). **Idempotente**.
 }
 ```
 
-Si ya estaba reversado → mismo shape con `"ya_reversado": true`.
+### Response (200) — ya reversado (idempotente)
+
+```json
+{
+  "success": true,
+  "ya_reversado": true,
+  "data": {
+    "transaccion_id": "BNC-2026-001234",
+    "cuenta_id":      "uuid",
+    "reversed_at":    "2026-06-29T15:31:12Z"
+  }
+}
+```
 
 ### Errores
 
-| Código | Cuándo |
+| HTTP | Caso |
 |---|---|
-| `401` | API key inválida |
-| `404` | `transaccion_id` no encontrado para este partner |
+| `400` | Falta `transaccion_id` |
+| `401` | API key inválida o ausente |
+| `404` | `transaccion_id` no encontrado para este `partner_id` |
 
 ---
 
-## 7 Datos de prueba
+## Ejemplos cURL
 
-Cargados en staging con el script `scripts/seed-bancard-test-data.sql`.
+### Consulta
 
-| # | Cliente | CI / RUC | Cuota / N° venta | Monto | Estado |
-|---|---|---|---|---|---|
-| 1 | Maria Lopez | 1111111 | BNC-TEST-001 | 1.500.000 | Pendiente |
-| 2 | Carlos Gimenez | 2222222 | BNC-TEST-002 | 2.000.000 | Vencido |
-| 3 | Ana Martinez | 3333333 | BNC-TEST-003 | 1.200.000 (sobre 2.000.000) | Parcial |
-| 4 | Pedro Rodriguez | 4444444 | BNC-TEST-004 | 0 (de 1.000.000) | Pagado |
-| 5 | Constructora Aurora SA | 80012345-6 | BNC-TEST-005-C1/C2/C3 | 5.000.000 c/u | 3 cuotas |
-| 6 | Rodrigo Acosta | 5555555 | BNC-TEST-006 | 50.000 | Pendiente chico |
-| 7 | Lucia Benitez | 6666666 | BNC-TEST-007 | 5.000.000 | Pendiente grande |
+```bash
+curl -X POST "https://greenland.neura.com.py/api/bancard/deudas/consultar" \
+  -H "X-Api-Key: <TU_KEY>" \
+  -H "X-Partner-Id: bancard" \
+  -H "Content-Type: application/json" \
+  -d '{ "tipo_documento": "ci", "documento": "1111111" }'
+```
+
+### Pago
+
+```bash
+curl -X POST "https://greenland.neura.com.py/api/bancard/pagos" \
+  -H "X-Api-Key: <TU_KEY>" \
+  -H "X-Partner-Id: bancard" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "transaccion_id": "BNC-2026-001234",
+    "numero_venta":   "BNC-TEST-001",
+    "monto":          1500000,
+    "moneda":         "GS",
+    "metodo":         "transferencia",
+    "referencia":     "Pago boca Infonet"
+  }'
+```
+
+### Reversa
+
+```bash
+curl -X POST "https://greenland.neura.com.py/api/bancard/pagos/reversa" \
+  -H "X-Api-Key: <TU_KEY>" \
+  -H "X-Partner-Id: bancard" \
+  -H "Content-Type: application/json" \
+  -d '{ "transaccion_id": "BNC-2026-001234" }'
+```
+
+---
+
+## 7 datos de prueba
+
+Cargados con `scripts/seed-bancard-test-data.sql`. Casos cubiertos:
+
+| # | Cliente | CI / RUC | numero_venta | Saldo | Estado | Caso |
+|---|---|---|---|---|---|---|
+| 1 | Maria Lopez | 1111111 | BNC-TEST-001 | 1.500.000 | Pendiente | Pago normal |
+| 2 | Carlos Gimenez | 2222222 | BNC-TEST-002 | 2.000.000 | Vencido | Pago de mora |
+| 3 | Ana Martinez | 3333333 | BNC-TEST-003 | 1.200.000 (de 2.000.000) | Parcial | Saldo remanente |
+| 4 | Pedro Rodriguez | 4444444 | BNC-TEST-004 | 0 (de 1.000.000) | Pagado | Rechazar pago de cuota saldada |
+| 5 | Constructora Aurora SA | 80012345-6 | BNC-TEST-005-C1/C2/C3 | 5.000.000 c/u | 3 cuotas | Multi-cuota, búsqueda por RUC |
+| 6 | Rodrigo Acosta | 5555555 | BNC-TEST-006 | 50.000 | Pendiente | Monto chico |
+| 7 | Lucia Benitez | 6666666 | BNC-TEST-007 | 5.000.000 | Pendiente | Monto grande |
 
 ---
 
 ## Casos de prueba sugeridos
 
-1. **Consulta exitosa** — `GET /api/public/mis-pagos?ci=1111111` → ver 1 cuota pendiente
-2. **Consulta sin resultados** — `GET /api/public/mis-pagos?ci=0000000` → `cliente: null`
-3. **Pago total** — pagar BNC-TEST-001 completo → estado pasa a `pagado`
-4. **Pago parcial** — pagar BNC-TEST-007 con monto 2.000.000 → estado `parcial`, saldo 3.000.000
-5. **Idempotencia** — reintentar el mismo pago → `ya_aplicado: true`
-6. **Conflicto** — mismo `transaccion_id` con otro monto → `409`
-7. **Reversa** — reversar pago → cuota vuelve a `pendiente` con saldo original
-8. **Reversa de inexistente** — `transaccion_id` que no existe → `404`
+1. **Consulta exitosa por CI** — `tipo_documento: ci`, `documento: 1111111` → 1 cuota pendiente
+2. **Consulta por RUC** — `tipo_documento: ruc`, `documento: 80012345-6` → 3 cuotas
+3. **Consulta sin resultados** — `documento: 0000000` → `cliente: null`
+4. **Pago total** — cuota BNC-TEST-001 con monto 1.500.000 → `estado_cuenta: pagado`
+5. **Pago parcial** — cuota BNC-TEST-007 con monto 2.000.000 → `estado_cuenta: parcial`, `saldo_restante: 3.000.000`
+6. **Idempotencia** — reintentar el mismo `transaccion_id` → `ya_aplicado: true`
+7. **Conflicto** — mismo `transaccion_id` con otro monto → `409`
+8. **Pago sobre saldo** — monto > saldo → `400`
+9. **Reversa exitosa** — pago previo → vuelve a `pendiente` con saldo original
+10. **Reversa idempotente** — reversar dos veces → `ya_reversado: true`
+11. **Reversa de tx inexistente** — `404`
+12. **Re-pago tras reversa** — mismo `transaccion_id` después de reversado → `409` (debe usar nuevo)
 
 ---
 
 ## Auditoría
 
-Todos los pagos y reversas quedan registrados en `pagos_externos` con:
-- `partner_id` (ej. "bancard")
+Todas las transacciones (pagos + reversas) quedan en `pagos_externos` con:
+- `partner_id` (ej. `bancard`)
 - `transaccion_id` original
-- `raw_request` (jsonb con el body recibido)
+- `raw_request` (jsonb con el body completo recibido)
 - `ip` del partner
 - `applied_at` / `reversed_at`
+- `cobro_id` (FK lógica al registro contable en `cobros_clientes`)
 
 ---
 
 ## Contacto técnico
 
-Para credenciales (`X-Api-Key`), URL de staging si necesitan separar, o cualquier ajuste:
-
 - **Email:** talvarez@greenlandpy.com
 - **Empresa:** Green Land SRL · RUC 80140360-0
+
+Para `X-Api-Key`, ajustes a la API o credenciales de staging separado, escribir al email de arriba.

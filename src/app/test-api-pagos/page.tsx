@@ -44,9 +44,17 @@ export default function TestApiPagosPage() {
   }
 
   async function doConsulta() {
+    if (!apiKey) { alert("Cargá la X-Api-Key arriba primero."); return; }
     setLoading(true); setResult(null);
     try {
-      const r = await fetch(`${BASE}/api/public/mis-pagos?ci=${encodeURIComponent(ci.trim())}`);
+      // Detecta CI vs RUC: si tiene guión y/o dígito verificador, asume RUC.
+      const docTrim = ci.trim();
+      const tipoDoc = /[-]/.test(docTrim) ? "ruc" : "ci";
+      const r = await fetch(`${BASE}/api/bancard/deudas/consultar`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Api-Key": apiKey, "X-Partner-Id": "test-erp" },
+        body: JSON.stringify({ tipo_documento: tipoDoc, documento: docTrim }),
+      });
       const j = await r.json();
       if (j?.success && j.data) setConsulta(j.data as Consulta);
       setResult({ ok: r.ok, text: JSON.stringify(j, null, 2) });
@@ -60,7 +68,7 @@ export default function TestApiPagosPage() {
     const tx = txId || genTx();
     setLoading(true); setResult(null);
     try {
-      const r = await fetch(`${BASE}/api/public/pagos`, {
+      const r = await fetch(`${BASE}/api/bancard/pagos`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Api-Key": apiKey, "X-Partner-Id": "test-erp" },
         body: JSON.stringify({
@@ -86,7 +94,7 @@ export default function TestApiPagosPage() {
     if (!txId) { alert("Necesitás un transaccion_id (el que generaste al pagar)."); return; }
     setLoading(true); setResult(null);
     try {
-      const r = await fetch(`${BASE}/api/public/pagos/reversa`, {
+      const r = await fetch(`${BASE}/api/bancard/pagos/reversa`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Api-Key": apiKey, "X-Partner-Id": "test-erp" },
         body: JSON.stringify({ transaccion_id: txId }),

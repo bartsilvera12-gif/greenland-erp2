@@ -8,14 +8,15 @@ export const dynamic = "force-dynamic";
 export async function OPTIONS() { return corsPreflight(); }
 
 /**
- * POST /api/public/pagos
+ * POST /api/bancard/pagos
  *
- * Aplica un pago externo (Pago Express / Aqui Pago / etc.) contra una cuota.
- * Idempotente por `transaccion_id` del partner.
+ * Aplica un pago de Bancard / Infonet Cobranzas (u otro partner externo)
+ * contra una cuota. Idempotente por `transaccion_id` del partner.
  *
  * Headers:
- *   X-Api-Key: <EXTERNAL_PAYMENT_API_KEY>
- *   X-Partner-Id: <opcional, ej "pago-express">
+ *   X-Api-Key:     <EXTERNAL_PAYMENT_API_KEY>
+ *   X-Partner-Id:  bancard
+ *   Content-Type:  application/json
  *
  * Body JSON:
  *   {

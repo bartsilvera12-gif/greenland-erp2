@@ -1,31 +1,38 @@
 {
   "info": {
-    "name": "Green Land · API pública de cobranza",
-    "description": "Los 3 métodos de la web service de cobranza para integraciones tipo Pago Express, Aqui Pago, Practipago, Infonet o Bancard Marketplace.\n\n## Setup\n1. Edita las variables del collection (botón 'Variables'): base_url, api_key, ci, numero_venta.\n2. Las requests usan {{base_url}} y {{api_key}} automáticamente.\n3. El transaccion_id se genera al vuelo con {{$timestamp}} para no chocar entre corridas.",
+    "name": "Green Land · Web Service Cobranzas Bancard",
+    "description": "Los 3 metodos del web service para Bancard / Infonet Cobranzas.\n\nTodos los endpoints requieren X-Api-Key + X-Partner-Id.\n\nSetup:\n1. Editá las variables del collection (Variables tab): base_url, api_key, documento, numero_venta.\n2. El transaccion_id se genera con {{$timestamp}} para evitar choques entre corridas.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
     { "key": "base_url", "value": "https://greenland.neura.com.py", "type": "string" },
     { "key": "api_key", "value": "CAMBIA_ESTO_POR_TU_KEY", "type": "string" },
-    { "key": "partner_id", "value": "pago-express-test", "type": "string" },
-    { "key": "ci", "value": "1234567", "type": "string" },
-    { "key": "numero_venta", "value": "VTA-TEST-002", "type": "string" },
+    { "key": "partner_id", "value": "bancard", "type": "string" },
+    { "key": "tipo_documento", "value": "ci", "type": "string" },
+    { "key": "documento", "value": "1111111", "type": "string" },
+    { "key": "numero_venta", "value": "BNC-TEST-001", "type": "string" },
     { "key": "monto", "value": "1500000", "type": "string" },
     { "key": "tx_id", "value": "TEST-{{$timestamp}}", "type": "string" }
   ],
   "item": [
     {
-      "name": "1. Consulta de deudas (publico)",
+      "name": "1. Consulta de deudas",
       "request": {
-        "method": "GET",
-        "header": [],
-        "url": {
-          "raw": "{{base_url}}/api/public/mis-pagos?ci={{ci}}",
-          "host": ["{{base_url}}"],
-          "path": ["api", "public", "mis-pagos"],
-          "query": [{ "key": "ci", "value": "{{ci}}" }]
+        "method": "POST",
+        "header": [
+          { "key": "X-Api-Key", "value": "{{api_key}}" },
+          { "key": "X-Partner-Id", "value": "{{partner_id}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"tipo_documento\": \"{{tipo_documento}}\",\n  \"documento\": \"{{documento}}\"\n}"
         },
-        "description": "Devuelve cliente + resumen + cuotas. Público (sin auth)."
+        "url": {
+          "raw": "{{base_url}}/api/bancard/deudas/consultar",
+          "host": ["{{base_url}}"],
+          "path": ["api", "bancard", "deudas", "consultar"]
+        }
       }
     },
     {
@@ -39,12 +46,12 @@
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"transaccion_id\": \"{{tx_id}}\",\n  \"numero_venta\":   \"{{numero_venta}}\",\n  \"monto\":          {{monto}},\n  \"moneda\":         \"GS\",\n  \"metodo\":         \"transferencia\",\n  \"referencia\":     \"Pago de prueba\"\n}"
+          "raw": "{\n  \"transaccion_id\": \"{{tx_id}}\",\n  \"numero_venta\":   \"{{numero_venta}}\",\n  \"monto\":          {{monto}},\n  \"moneda\":         \"GS\",\n  \"metodo\":         \"transferencia\",\n  \"referencia\":     \"Pago boca Infonet\"\n}"
         },
         "url": {
-          "raw": "{{base_url}}/api/public/pagos",
+          "raw": "{{base_url}}/api/bancard/pagos",
           "host": ["{{base_url}}"],
-          "path": ["api", "public", "pagos"]
+          "path": ["api", "bancard", "pagos"]
         }
       }
     },
@@ -62,9 +69,9 @@
           "raw": "{\n  \"transaccion_id\": \"{{tx_id}}\",\n  \"numero_venta\":   \"{{numero_venta}}\",\n  \"monto\":          {{monto}}\n}"
         },
         "url": {
-          "raw": "{{base_url}}/api/public/pagos",
+          "raw": "{{base_url}}/api/bancard/pagos",
           "host": ["{{base_url}}"],
-          "path": ["api", "public", "pagos"]
+          "path": ["api", "bancard", "pagos"]
         },
         "description": "Debe devolver `ya_aplicado: true` con los mismos datos. Sin duplicar el cobro."
       }
@@ -83,22 +90,29 @@
           "raw": "{\n  \"transaccion_id\": \"{{tx_id}}\"\n}"
         },
         "url": {
-          "raw": "{{base_url}}/api/public/pagos/reversa",
+          "raw": "{{base_url}}/api/bancard/pagos/reversa",
           "host": ["{{base_url}}"],
-          "path": ["api", "public", "pagos", "reversa"]
+          "path": ["api", "bancard", "pagos", "reversa"]
         }
       }
     },
     {
       "name": "4. Consulta post-reversa (debe volver a estar pendiente)",
       "request": {
-        "method": "GET",
-        "header": [],
+        "method": "POST",
+        "header": [
+          { "key": "X-Api-Key", "value": "{{api_key}}" },
+          { "key": "X-Partner-Id", "value": "{{partner_id}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"tipo_documento\": \"{{tipo_documento}}\",\n  \"documento\": \"{{documento}}\"\n}"
+        },
         "url": {
-          "raw": "{{base_url}}/api/public/mis-pagos?ci={{ci}}",
+          "raw": "{{base_url}}/api/bancard/deudas/consultar",
           "host": ["{{base_url}}"],
-          "path": ["api", "public", "mis-pagos"],
-          "query": [{ "key": "ci", "value": "{{ci}}" }]
+          "path": ["api", "bancard", "deudas", "consultar"]
         }
       }
     }
