@@ -43,15 +43,24 @@ export async function GET(request: NextRequest, ctxP: { params: Promise<{ id: st
   if (!ctx) return new NextResponse("No autorizado", { status: 401 });
   const { supabase, auth } = ctx;
 
-  // Venta
+  // Venta (incluye snapshot de propiedad para que el recibo sobreviva a un
+  // delete posterior del lote del catálogo)
   const { data: ventaRaw, error: errV } = await supabase
     .from("ventas")
-    .select("id, numero_control, tipo_venta, total, moneda, cliente_id, propiedad_id, created_at")
+    .select("id, numero_control, tipo_venta, total, moneda, cliente_id, propiedad_id, created_at, propiedad_titulo_snapshot, propiedad_codigo_snapshot, propiedad_ciudad_snapshot, propiedad_barrio_snapshot, propiedad_finca_snapshot, propiedad_padron_snapshot, propiedad_cuenta_catastral_snapshot, propiedad_terreno_m2_snapshot")
     .eq("empresa_id", auth.empresa_id)
     .eq("id", id)
     .maybeSingle();
   if (errV || !ventaRaw) return new NextResponse("Venta no encontrada", { status: 404 });
-  const venta = ventaRaw as { id: string; numero_control: string; tipo_venta: string; total: number | string; moneda: string; cliente_id: string | null; propiedad_id: string | null; created_at: string };
+  const venta = ventaRaw as {
+    id: string; numero_control: string; tipo_venta: string; total: number | string; moneda: string;
+    cliente_id: string | null; propiedad_id: string | null; created_at: string;
+    propiedad_titulo_snapshot: string | null; propiedad_codigo_snapshot: string | null;
+    propiedad_ciudad_snapshot: string | null; propiedad_barrio_snapshot: string | null;
+    propiedad_finca_snapshot: string | null; propiedad_padron_snapshot: string | null;
+    propiedad_cuenta_catastral_snapshot: string | null;
+    propiedad_terreno_m2_snapshot: number | string | null;
+  };
 
   // Cliente
   let cliente: { nombre: string; ruc: string | null; documento: string | null; telefono: string | null; email: string | null } = { nombre: "Cliente", ruc: null, documento: null, telefono: null, email: null };
@@ -71,14 +80,29 @@ export async function GET(request: NextRequest, ctxP: { params: Promise<{ id: st
     }
   }
 
-  // Propiedad (opcional)
+  // Propiedad (opcional): preferimos el SNAPSHOT guardado en la venta (data
+  // congelada al momento de la operación). Fallback a query live solo si la
+  // venta es vieja y nunca tuvo snapshot.
   type Propiedad = {
     titulo: string; codigo: string | null; ciudad: string | null; barrio: string | null;
     finca: string | null; padron: string | null; cuenta_catastral: string | null;
     terreno_m2: number | string | null;
   };
   let propiedad: Propiedad | null = null;
-  if (venta.propiedad_id) {
+  if (venta.propiedad_titulo_snapshot) {
+    // Snapshot disponible → es la fuente de verdad
+    propiedad = {
+      titulo: venta.propiedad_titulo_snapshot,
+      codigo: venta.propiedad_codigo_snapshot,
+      ciudad: venta.propiedad_ciudad_snapshot,
+      barrio: venta.propiedad_barrio_snapshot,
+      finca: venta.propiedad_finca_snapshot,
+      padron: venta.propiedad_padron_snapshot,
+      cuenta_catastral: venta.propiedad_cuenta_catastral_snapshot,
+      terreno_m2: venta.propiedad_terreno_m2_snapshot,
+    };
+  } else if (venta.propiedad_id) {
+    // Backfill defensivo: ventas viejas pre-snapshot
     const { data: p } = await supabase
       .from("propiedades")
       .select("titulo, codigo, ciudad, barrio, finca, padron, cuenta_catastral, terreno_m2")

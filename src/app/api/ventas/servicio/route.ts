@@ -125,6 +125,26 @@ export async function POST(request: NextRequest) {
 
     // Insertar venta principal
     const propiedadId = body.propiedad_id && UUID_RE.test(body.propiedad_id) ? body.propiedad_id : null;
+
+    // Si hay propiedad linkeada, snapshot de sus datos en la venta.
+    // Así el recibo conserva la info aunque la propiedad sea borrada después.
+    type PropSnap = {
+      titulo: string | null; codigo: string | null;
+      ciudad: string | null; barrio: string | null;
+      finca: string | null; padron: string | null;
+      cuenta_catastral: string | null; terreno_m2: number | string | null;
+    };
+    let propSnap: PropSnap | null = null;
+    if (propiedadId) {
+      const { data: pData } = await supabase
+        .from("propiedades")
+        .select("titulo, codigo, ciudad, barrio, finca, padron, cuenta_catastral, terreno_m2")
+        .eq("empresa_id", empresaId)
+        .eq("id", propiedadId)
+        .maybeSingle();
+      if (pData) propSnap = pData as PropSnap;
+    }
+
     const insVenta = await supabase
       .from("ventas")
       .insert({
@@ -135,6 +155,14 @@ export async function POST(request: NextRequest) {
         total: Math.round(total),
         moneda,
         propiedad_id: propiedadId,
+        propiedad_titulo_snapshot:           propSnap?.titulo ?? null,
+        propiedad_codigo_snapshot:           propSnap?.codigo ?? null,
+        propiedad_ciudad_snapshot:           propSnap?.ciudad ?? null,
+        propiedad_barrio_snapshot:           propSnap?.barrio ?? null,
+        propiedad_finca_snapshot:            propSnap?.finca ?? null,
+        propiedad_padron_snapshot:           propSnap?.padron ?? null,
+        propiedad_cuenta_catastral_snapshot: propSnap?.cuenta_catastral ?? null,
+        propiedad_terreno_m2_snapshot:       propSnap?.terreno_m2 ?? null,
       })
       .select("id, numero_control")
       .single();
