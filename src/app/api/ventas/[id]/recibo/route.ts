@@ -72,14 +72,19 @@ export async function GET(request: NextRequest, ctxP: { params: Promise<{ id: st
   }
 
   // Propiedad (opcional)
-  let propiedad: { titulo: string; codigo: string | null; ciudad: string | null; barrio: string | null; finca: string | null; padron: string | null; cuenta_catastral: string | null; terreno_m2: number | string | null } | null = null;
+  type Propiedad = {
+    titulo: string; codigo: string | null; ciudad: string | null; barrio: string | null;
+    finca: string | null; padron: string | null; cuenta_catastral: string | null;
+    terreno_m2: number | string | null;
+  };
+  let propiedad: Propiedad | null = null;
   if (venta.propiedad_id) {
     const { data: p } = await supabase
       .from("propiedades")
       .select("titulo, codigo, ciudad, barrio, finca, padron, cuenta_catastral, terreno_m2")
       .eq("id", venta.propiedad_id)
       .maybeSingle();
-    if (p) propiedad = p as typeof propiedad;
+    if (p) propiedad = p as Propiedad;
   }
 
   // Cuotas
