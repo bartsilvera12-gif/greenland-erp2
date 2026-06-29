@@ -1,0 +1,106 @@
+{
+  "info": {
+    "name": "Green Land · API pública de cobranza",
+    "description": "Los 3 métodos de la web service de cobranza para integraciones tipo Pago Express, Aqui Pago, Practipago, Infonet o Bancard Marketplace.\n\n## Setup\n1. Edita las variables del collection (botón 'Variables'): base_url, api_key, ci, numero_venta.\n2. Las requests usan {{base_url}} y {{api_key}} automáticamente.\n3. El transaccion_id se genera al vuelo con {{$timestamp}} para no chocar entre corridas.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "https://greenland.neura.com.py", "type": "string" },
+    { "key": "api_key", "value": "CAMBIA_ESTO_POR_TU_KEY", "type": "string" },
+    { "key": "partner_id", "value": "pago-express-test", "type": "string" },
+    { "key": "ci", "value": "1234567", "type": "string" },
+    { "key": "numero_venta", "value": "VTA-TEST-002", "type": "string" },
+    { "key": "monto", "value": "1500000", "type": "string" },
+    { "key": "tx_id", "value": "TEST-{{$timestamp}}", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "1. Consulta de deudas (publico)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/api/public/mis-pagos?ci={{ci}}",
+          "host": ["{{base_url}}"],
+          "path": ["api", "public", "mis-pagos"],
+          "query": [{ "key": "ci", "value": "{{ci}}" }]
+        },
+        "description": "Devuelve cliente + resumen + cuotas. Público (sin auth)."
+      }
+    },
+    {
+      "name": "2. Aplicar pago",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "X-Api-Key", "value": "{{api_key}}" },
+          { "key": "X-Partner-Id", "value": "{{partner_id}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"transaccion_id\": \"{{tx_id}}\",\n  \"numero_venta\":   \"{{numero_venta}}\",\n  \"monto\":          {{monto}},\n  \"moneda\":         \"GS\",\n  \"metodo\":         \"transferencia\",\n  \"referencia\":     \"Pago de prueba\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/public/pagos",
+          "host": ["{{base_url}}"],
+          "path": ["api", "public", "pagos"]
+        }
+      }
+    },
+    {
+      "name": "2b. Reintentar mismo pago (idempotencia)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "X-Api-Key", "value": "{{api_key}}" },
+          { "key": "X-Partner-Id", "value": "{{partner_id}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"transaccion_id\": \"{{tx_id}}\",\n  \"numero_venta\":   \"{{numero_venta}}\",\n  \"monto\":          {{monto}}\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/public/pagos",
+          "host": ["{{base_url}}"],
+          "path": ["api", "public", "pagos"]
+        },
+        "description": "Debe devolver `ya_aplicado: true` con los mismos datos. Sin duplicar el cobro."
+      }
+    },
+    {
+      "name": "3. Reversar pago",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "X-Api-Key", "value": "{{api_key}}" },
+          { "key": "X-Partner-Id", "value": "{{partner_id}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"transaccion_id\": \"{{tx_id}}\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/public/pagos/reversa",
+          "host": ["{{base_url}}"],
+          "path": ["api", "public", "pagos", "reversa"]
+        }
+      }
+    },
+    {
+      "name": "4. Consulta post-reversa (debe volver a estar pendiente)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/api/public/mis-pagos?ci={{ci}}",
+          "host": ["{{base_url}}"],
+          "path": ["api", "public", "mis-pagos"],
+          "query": [{ "key": "ci", "value": "{{ci}}" }]
+        }
+      }
+    }
+  ]
+}
