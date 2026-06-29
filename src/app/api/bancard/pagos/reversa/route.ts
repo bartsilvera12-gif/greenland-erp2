@@ -60,14 +60,25 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  // 2) Borrar el cobro original
+  const reversedAt = new Date().toISOString();
+  const motivo = `reversa técnica ${auth.partner_id === "bancard" ? "Bancard" : auth.partner_id}`;
+
+  // 2) SOFT-DELETE del cobro: marcamos reversado en vez de borrar. Conserva
+  //    auditoría contable completa (monto, fecha original, método, etc.).
   if (pago.cobro_id) {
-    const delC = await supabase
+    const updCobro = await supabase
       .from("cobros_clientes")
-      .delete()
+      .update({
+        estado: "reversado",
+        reversed_at: reversedAt,
+        reversa_transaccion_id: transaccionId,
+        reversa_motivo: motivo,
+      })
       .eq("empresa_id", empresaId)
       .eq("id", pago.cobro_id);
-    if (delC.error) return corsJson({ success: false, error: `Error al borrar cobro: ${delC.error.message}` }, { status: 500 });
+    if (updCobro.error) {
+      return corsJson({ success: false, error: `Error al marcar cobro como reversado: ${updCobro.error.message}` }, { status: 500 });
+    }
   }
 
   // 3) Restaurar saldo y estado en cuentas_por_cobrar
@@ -92,11 +103,11 @@ export async function POST(request: NextRequest) {
     .eq("id", pago.cuenta_id);
   if (updC.error) return corsJson({ success: false, error: `Error al actualizar saldo: ${updC.error.message}` }, { status: 500 });
 
-  // 4) Marcar pago externo como reversado
-  const reversedAt = new Date().toISOString();
+  // 4) Marcar pago externo como reversado. Mantengo cobro_id para que el log
+  //    quede linkeado al registro contable (que ahora está como reversado).
   await supabase
     .from("pagos_externos")
-    .update({ estado: "reversado", reversed_at: reversedAt, cobro_id: null })
+    .update({ estado: "reversado", reversed_at: reversedAt })
     .eq("id", pago.id);
 
   return corsJson({

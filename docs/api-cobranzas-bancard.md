@@ -323,13 +323,29 @@ Cargados con `scripts/seed-bancard-test-data.sql`. Casos cubiertos:
 
 ## Auditoría
 
-Todas las transacciones (pagos + reversas) quedan en `pagos_externos` con:
+**No se elimina nada físicamente.** Las reversas hacen *soft-delete*: marcan
+el registro como reversado pero conservan toda la información financiera.
+
+### Tabla `pagos_externos` (log del partner)
 - `partner_id` (ej. `bancard`)
 - `transaccion_id` original
 - `raw_request` (jsonb con el body completo recibido)
 - `ip` del partner
 - `applied_at` / `reversed_at`
-- `cobro_id` (FK lógica al registro contable en `cobros_clientes`)
+- `estado`: `aplicado` | `reversado`
+- `cobro_id` (FK lógica al registro contable en `cobros_clientes`, se mantiene
+  aún después de reversar para preservar el link)
+
+### Tabla `cobros_clientes` (libro de cobros, ERP)
+Al reversar, **el cobro NO se borra**. Se actualiza con:
+- `estado`: pasa de `aplicado` a `reversado`
+- `reversed_at`: timestamp
+- `reversa_transaccion_id`: el `transaccion_id` externo que disparó la reversa
+- `reversa_motivo`: `reversa técnica Bancard` (default según `partner_id`)
+
+Esto garantiza traza contable completa: el cobro original sigue ahí con monto,
+fecha, método y entidad bancaria; sólo cambia el estado para indicar que fue
+revertido. La conciliación con extractos bancarios sigue siendo posible.
 
 ---
 
