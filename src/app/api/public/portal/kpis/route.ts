@@ -48,6 +48,7 @@ export async function GET(request: NextRequest) {
     .from("cobros_clientes")
     .select("monto, fecha_pago")
     .eq("empresa_id", session.empresa_id)
+    .eq("estado", "aplicado")
     .gte("fecha_pago", primerDiaMes);
   // tabla puede no existir si la instancia usa "cobros" en vez de "cobros_clientes"; degradamos a 0.
   let cobrado_mes = 0;

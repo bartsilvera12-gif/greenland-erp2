@@ -68,10 +68,15 @@ export async function GET(request: NextRequest, ctxParams: { params: Promise<{ i
     return { numero: r.numero_venta, emision: r.fecha_emision, venc, total, cobrado: total - saldo, saldo, estado: r.estado, vencida };
   });
 
+  // El PDF de estado de cuenta es un documento formal hacia el cliente: solo
+  // se listan cobros aplicados. Los reversados no aparecen porque no son
+  // ingresos reales (en el ERP siguen visibles para auditoría interna).
   const cobQ = await ctx.supabase
     .from("cobros_clientes")
     .select("fecha_pago, monto, metodo_pago, referencia, usuario_nombre")
-    .eq("empresa_id", empresaId).eq("cliente_id", id).order("fecha_pago", { ascending: false }).limit(500);
+    .eq("empresa_id", empresaId).eq("cliente_id", id)
+    .eq("estado", "aplicado")
+    .order("fecha_pago", { ascending: false }).limit(500);
   const cobros = (cobQ.data ?? []) as Record<string, unknown>[];
 
   let nombreEmpresa: string | null = null;

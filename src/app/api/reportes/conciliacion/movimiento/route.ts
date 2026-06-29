@@ -37,15 +37,17 @@ export async function POST(request: NextRequest) {
       conciliado_por: estado === "pendiente" ? null : quienNombre,
     };
 
-    const upd = await ctx.supabase
+    // Para cobros: no se puede conciliar uno reversado (no es ingreso real).
+    let q = ctx.supabase
       .from(tabla)
       .update(patch)
       .eq("empresa_id", ctx.auth.empresa_id)
-      .eq("id", id)
-      .select("id")
-      .maybeSingle();
+      .eq("id", id);
+    if (tipo === "cobro") q = q.eq("estado", "aplicado");
+
+    const upd = await q.select("id").maybeSingle();
     if (upd.error) throw new Error(upd.error.message);
-    if (!upd.data) return NextResponse.json(errorResponse("Movimiento no encontrado."), { status: 404 });
+    if (!upd.data) return NextResponse.json(errorResponse("Movimiento no encontrado o reversado."), { status: 404 });
 
     return NextResponse.json(successResponse({ id, tipo, estado }));
   } catch (err) {

@@ -74,10 +74,12 @@ export async function GET(request: NextRequest, ctxParams: { params: Promise<{ i
       };
     });
 
-    // Historial de cobros del cliente.
+    // Historial de cobros del cliente (incluye reversados con su estado
+    // para que la UI los marque; los totales del resumen ya reflejan la
+    // reversa porque saldoPendiente se restaura al reversar).
     const cobQ = await ctx.supabase
       .from("cobros_clientes")
-      .select("id, cuenta_por_cobrar_id, venta_id, fecha_pago, monto, metodo_pago, referencia")
+      .select("id, cuenta_por_cobrar_id, venta_id, fecha_pago, monto, metodo_pago, referencia, estado, reversed_at, reversa_motivo")
       .eq("empresa_id", empresaId)
       .eq("cliente_id", id)
       .order("fecha_pago", { ascending: false })

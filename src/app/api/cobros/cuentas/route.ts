@@ -78,12 +78,14 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Cobrado del mes en curso.
+    // Cobrado del mes en curso. SOLO cobros aplicados (los reversados no son
+    // ingreso real).
     const inicioMes = `${hoy.slice(0, 7)}-01`;
     const cobMesQ = await ctx.supabase
       .from("cobros_clientes")
       .select("monto, fecha_pago")
       .eq("empresa_id", empresaId)
+      .eq("estado", "aplicado")
       .gte("fecha_pago", inicioMes);
     let cobradoMes = 0;
     for (const r of (cobMesQ.data ?? []) as Record<string, unknown>[]) cobradoMes += Number(r.monto) || 0;
@@ -93,9 +95,11 @@ export async function GET(request: NextRequest) {
     for (const r of (allQ.data ?? []) as Record<string, unknown>[]) if (r.estado === "parcial") parciales += 1;
 
     // Historial de cobros recientes (para la pestaña de cobros registrados).
+    // Devolvemos todos (incluso reversados) para preservar auditoría visible;
+    // el frontend puede marcar los reversados con un badge.
     const histQ = await ctx.supabase
       .from("cobros_clientes")
-      .select("id, cliente_id, venta_id, cuenta_por_cobrar_id, fecha_pago, monto, metodo_pago, referencia, usuario_nombre")
+      .select("id, cliente_id, venta_id, cuenta_por_cobrar_id, fecha_pago, monto, metodo_pago, referencia, usuario_nombre, estado, reversed_at, reversa_motivo")
       .eq("empresa_id", empresaId)
       .order("fecha_pago", { ascending: false })
       .limit(500);

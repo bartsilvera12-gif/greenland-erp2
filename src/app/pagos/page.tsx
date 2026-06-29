@@ -32,6 +32,9 @@ type Cobro = {
   metodo_pago: string;
   referencia: string | null;
   usuario_nombre: string | null;
+  estado?: "aplicado" | "reversado";
+  reversed_at?: string | null;
+  reversa_motivo?: string | null;
 };
 
 const ESTADO_BADGE: Record<string, string> = {
@@ -140,7 +143,11 @@ export default function PagosPage() {
     () => pendientes.reduce((a, c) => ({ total: a.total + c.total, saldo: a.saldo + c.saldo }), { total: 0, saldo: 0 }),
     [pendientes]
   );
-  const sumCob = useMemo(() => cobradosVista.reduce((a, c) => a + c.monto, 0), [cobradosVista]);
+  // Suma solo cobros aplicados (reversados no son ingreso real).
+  const sumCob = useMemo(
+    () => cobradosVista.reduce((a, c) => a + (c.estado === "reversado" ? 0 : c.monto), 0),
+    [cobradosVista],
+  );
 
   function abrirCobro(c: Cuenta) {
     setCobrando(c);
@@ -310,17 +317,20 @@ export default function PagosPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {cobradosVista.map((c) => (
-                    <tr key={c.id} className="hover:bg-slate-50">
+                  {cobradosVista.map((c) => {
+                    const reversado = c.estado === "reversado";
+                    return (
+                    <tr key={c.id} className={`hover:bg-slate-50 ${reversado ? "opacity-60" : ""}`}>
                       <td className="py-2.5 px-4 text-gray-600">{fmtFecha(c.fecha_pago)}</td>
                       <td className="py-2.5 px-4 text-gray-700">
                         {c.cliente_id ? <Link href={`/clientes/${c.cliente_id}/estado-cuenta`} className="hover:text-[#4FAEB2] hover:underline">{c.cliente_nombre}</Link> : c.cliente_nombre}
+                        {reversado ? <span className="ml-2 rounded bg-rose-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-rose-700" title={c.reversa_motivo ?? "Reversado"}>Reversado</span> : null}
                       </td>
                       <td className="py-2.5 px-4 font-mono text-gray-700">{c.numero_venta ?? "—"}</td>
                       <td className="py-2.5 px-4 text-gray-600">{METODO_LABEL[c.metodo_pago] ?? c.metodo_pago}</td>
                       <td className="py-2.5 px-4 text-gray-500">{c.referencia ?? "—"}</td>
                       <td className="py-2.5 px-4 text-gray-600">{c.usuario_nombre ?? "—"}</td>
-                      <td className="py-2.5 px-4 text-right tabular-nums font-semibold text-emerald-700">{fmtGs(c.monto)}</td>
+                      <td className={`py-2.5 px-4 text-right tabular-nums font-semibold ${reversado ? "text-slate-400 line-through" : "text-emerald-700"}`}>{fmtGs(c.monto)}</td>
                       <td className="py-2.5 px-4 text-right">
                         <button
                           disabled={reciboBusy === c.id}
@@ -341,7 +351,8 @@ export default function PagosPage() {
                         </button>
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
                 <tfoot>
                   <tr className="border-t-2 border-slate-200 bg-slate-50/90">
