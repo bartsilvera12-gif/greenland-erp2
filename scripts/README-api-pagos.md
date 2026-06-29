@@ -1,13 +1,16 @@
-# Testeo de la API pública de cobranza
+# Testeo del Web Service de Cobranzas para Bancard
 
-Tres métodos para integraciones tipo Pago Express, Aqui Pago, Practipago,
-Infonet o Bancard Marketplace:
+Tres métodos dedicados para Bancard / Infonet Cobranzas. Todos requieren los
+headers `X-Api-Key` + `X-Partner-Id: bancard` + `Content-Type: application/json`.
 
-| # | Método | Endpoint | Auth |
-|---|---|---|---|
-| 1 | Consulta de deudas | `GET /api/public/mis-pagos?ci=...` | público |
-| 2 | Pago | `POST /api/public/pagos` | `X-Api-Key` |
-| 3 | Reversa | `POST /api/public/pagos/reversa` | `X-Api-Key` |
+| # | Método | Endpoint |
+|---|---|---|
+| 1 | Consulta de deudas | `POST /api/bancard/deudas/consultar` |
+| 2 | Pago | `POST /api/bancard/pagos` |
+| 3 | Reversa | `POST /api/bancard/pagos/reversa` |
+
+> La ruta `GET /api/public/mis-pagos` queda exclusivamente para el portal web
+> del cliente final (greenlandpy.com/mis-pagos.html). Bancard NO debe usarla.
 
 ## Prerequisitos (una sola vez)
 
