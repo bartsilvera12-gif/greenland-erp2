@@ -101,6 +101,7 @@ export const ALLOWED_MENU_KEYS = new Set<string>([
   "testimonios",
   "configuracion",
   "portal_web",
+  "pagos",
 ]);
 
 const MENU_STRUCTURE: MenuItem[] = [
