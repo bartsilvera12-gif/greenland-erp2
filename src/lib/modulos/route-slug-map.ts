@@ -18,6 +18,7 @@ const SIDEBAR_SLUG_HREF_ORDER: { slug: string; href: string }[] = [
   { slug: "propiedades", href: "/propiedades" },
   { slug: "promociones", href: "/promociones" },
   { slug: "testimonios", href: "/testimonios" },
+  { slug: "portal_web", href: "/portal-usuarios" },
   { slug: "compras", href: "/compras" },
   { slug: "gastos", href: "/gastos" },
   { slug: "reportes", href: "/reportes" },
@@ -144,6 +145,7 @@ export function pathRequiresModuleSlug(pathname: string): string | null {
   if (p.startsWith("/propiedades")) return "propiedades";
   if (p.startsWith("/promociones")) return "promociones";
   if (p.startsWith("/testimonios")) return "testimonios";
+  if (p.startsWith("/portal-usuarios")) return "portal_web";
   if (p.startsWith("/proveedores")) return "compras";
   if (p.startsWith("/compras")) return "compras";
   if (p.startsWith("/gastos")) return "gastos";

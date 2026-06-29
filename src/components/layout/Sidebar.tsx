@@ -100,6 +100,7 @@ export const ALLOWED_MENU_KEYS = new Set<string>([
   "reportes",
   "testimonios",
   "configuracion",
+  "portal_web",
 ]);
 
 const MENU_STRUCTURE: MenuItem[] = [
@@ -136,6 +137,7 @@ const MENU_STRUCTURE: MenuItem[] = [
   { key: "ventas", slug: "ventas", label: "Venta", href: "/ventas", icon: ShoppingCart },
   { key: "promociones", slug: "promociones", label: "Promociones", href: "/promociones", icon: Megaphone },
   { key: "testimonios", slug: "testimonios", label: "Testimonios", href: "/testimonios", icon: Star },
+  { key: "portal_web", slug: "portal_web", label: "Portal Web", href: "/portal-usuarios", icon: UserCog },
   { key: "presupuestos", slug: "presupuestos", label: "Presupuestos", href: "/presupuestos", icon: FileText },
   {
     key: "proyectos",
@@ -220,7 +222,7 @@ const MENU_STRUCTURE: MenuItem[] = [
 const MENU_FAMILIES: { id: string; titulo: string; keys: string[] }[] = [
   { id: "inicio", titulo: "Inicio", keys: ["dashboard"] },
   { id: "comercial", titulo: "Comercial", keys: ["clientes", "crm", "gestion-clientes", "ventas", "presupuestos", "promociones", "comisiones", "planes"] },
-  { id: "contenido", titulo: "Contenido web", keys: ["testimonios"] },
+  { id: "contenido", titulo: "Contenido web", keys: ["testimonios", "portal_web"] },
   { id: "finanzas", titulo: "Finanzas", keys: ["pagos", "pagos_proveedores", "gastos", "notas_credito", "reportes"] },
   { id: "operaciones", titulo: "Operaciones", keys: ["inventario", "compras", "recetas", "proyectos", "propiedades"] },
   { id: "omnicanal", titulo: "Omnicanal", keys: ["conversaciones", "conversaciones-finalizadas", "historial-omnicanal", "monitoreo", "campanas"] },
