@@ -24,7 +24,10 @@ interface Body {
   cuota_monto?: number;
   fecha_primera_cuota?: string;
   intervalo_dias?: number;
+  propiedad_id?: string | null;
 }
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function isMoneda(v: unknown): v is "GS" | "USD" {
   return v === "GS" || v === "USD";
@@ -121,6 +124,7 @@ export async function POST(request: NextRequest) {
     const numeroControl = `VTA-${yyyymmdd}-${rand}`;
 
     // Insertar venta principal
+    const propiedadId = body.propiedad_id && UUID_RE.test(body.propiedad_id) ? body.propiedad_id : null;
     const insVenta = await supabase
       .from("ventas")
       .insert({
@@ -130,6 +134,7 @@ export async function POST(request: NextRequest) {
         tipo_venta: tipoVenta,
         total: Math.round(total),
         moneda,
+        propiedad_id: propiedadId,
       })
       .select("id, numero_control")
       .single();

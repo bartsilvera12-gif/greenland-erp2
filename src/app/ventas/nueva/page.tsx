@@ -21,6 +21,19 @@ interface ClienteOpt {
   documento: string | null;
 }
 
+interface PropiedadOpt {
+  id: string;
+  codigo: string | null;
+  titulo: string;
+  ciudad: string | null;
+  precio: number | null;
+  moneda: string | null;
+  modalidad: string | null;
+  cuotas_cantidad: number | null;
+  cuota_monto: number | null;
+  estado: string | null;
+}
+
 function ivaRate(t: TipoIva): number {
   return t === "5%" ? 0.05 : t === "10%" ? 0.10 : 0;
 }
@@ -88,6 +101,8 @@ export default function NuevaVentaPage() {
 
   const [clientes, setClientes] = useState<ClienteOpt[]>([]);
   const [clienteId, setClienteId] = useState<string>("");
+  const [propiedades, setPropiedades] = useState<PropiedadOpt[]>([]);
+  const [propiedadId, setPropiedadId] = useState<string>("");
 
   const [razonSocial, setRazonSocial] = useState("");
   const [ruc, setRuc] = useState("");
@@ -113,7 +128,37 @@ export default function NuevaVentaPage() {
         setClientes(arr);
       } catch { /* sin clientes */ }
     })();
+    void (async () => {
+      try {
+        const res = await fetchWithSupabaseSession("/api/propiedades", { cache: "no-store" });
+        const json = await res.json();
+        const arr = Array.isArray(json?.data) ? (json.data as PropiedadOpt[]) : [];
+        // Solo disponibles / reservadas (no vendidas/inactivas)
+        setPropiedades(arr.filter((p) => !p.estado || ["disponible", "reservada"].includes(String(p.estado).toLowerCase())));
+      } catch { /* sin propiedades */ }
+    })();
   }, []);
+
+  function onPropiedadSelected(id: string) {
+    setPropiedadId(id);
+    if (!id) return;
+    const p = propiedades.find((x) => x.id === id);
+    if (!p) return;
+    // Pre-completa el primer servicio con titulo + precio
+    setServicios([{ descripcion: p.titulo + (p.codigo ? ` (${p.codigo})` : ""), monto: p.precio || 0 }]);
+    // Modalidad: si la propiedad esta en Credito y tiene cuotas, precarga
+    const mod = String(p.modalidad || "").toLowerCase();
+    if (mod === "credito" && p.cuotas_cantidad) {
+      setTipoVenta("CREDITO");
+      setCuotasCantidad(p.cuotas_cantidad);
+      if (p.cuota_monto) setCuotaMonto(p.cuota_monto);
+    } else if (mod === "contado") {
+      setTipoVenta("CONTADO");
+    }
+    // Moneda
+    if (p.moneda === "USD") setMoneda("USD");
+    else if (p.moneda === "PYG" || p.moneda === "GS") setMoneda("GS");
+  }
 
   function onClienteSelected(id: string) {
     setClienteId(id);
@@ -170,6 +215,7 @@ export default function NuevaVentaPage() {
           fecha_primera_cuota: tipoVenta === "CREDITO" ? fechaPrimeraCuota || undefined : undefined,
           intervalo_dias: tipoVenta === "CREDITO" ? intervaloDias : undefined,
           observaciones: observaciones.trim() || null,
+          propiedad_id: propiedadId || null,
         }),
       });
       const json = await res.json();
@@ -177,6 +223,11 @@ export default function NuevaVentaPage() {
         setErr(json?.error ?? "No se pudo crear la venta");
         setSaving(false);
         return;
+      }
+      const nuevaId = json.data?.venta?.id;
+      if (nuevaId) {
+        // Abre el recibo en una pestaña nueva con auto-print
+        window.open(`/api/ventas/${nuevaId}/recibo?auto=1`, "_blank");
       }
       router.push("/ventas");
       router.refresh();
@@ -250,6 +301,24 @@ export default function NuevaVentaPage() {
               return <option key={c.id} value={c.id}>{n}{doc ? ` · ${doc}` : ""}</option>;
             })}
           </select>
+        </div>
+
+        {/* Propiedad — opcional, autocompleta servicio/cuotas/moneda */}
+        <div>
+          <label className={labelClass}>Propiedad vendida (opcional)</label>
+          <select className={inputClass} value={propiedadId} onChange={(e) => onPropiedadSelected(e.target.value)}>
+            <option value="">— No vincular a una propiedad —</option>
+            {propiedades.map((p) => {
+              const precio = p.precio ? ` · Gs. ${Math.round(p.precio).toLocaleString("es-PY")}` : "";
+              const ciudad = p.ciudad ? ` · ${p.ciudad}` : "";
+              return <option key={p.id} value={p.id}>{p.titulo}{ciudad}{precio}</option>;
+            })}
+          </select>
+          {propiedadId ? (
+            <p className="mt-1 text-[11px] text-emerald-700">Se autocompletó descripción, monto, modalidad y cuotas desde la propiedad.</p>
+          ) : (
+            <p className="mt-1 text-[11px] text-slate-400">Si vendés un lote, elegilo acá: se autocompletan datos y queda linkeado en el recibo.</p>
+          )}
         </div>
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
