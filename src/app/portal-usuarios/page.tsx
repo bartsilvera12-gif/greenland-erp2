@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Plus, Pencil, Trash2, KeyRound } from "lucide-react";
+import { Plus, Pencil, Trash2, KeyRound, Eye, EyeOff } from "lucide-react";
 import { fetchWithSupabaseSession } from "@/lib/api/fetch-with-supabase-session";
 import ConfirmModal from "@/components/ui/ConfirmModal";
 
@@ -34,6 +34,7 @@ export default function PortalUsuariosPage() {
   const [error, setError] = useState<string | null>(null);
   const [toDelete, setToDelete] = useState<PortalUser | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [showPass, setShowPass] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -45,6 +46,7 @@ export default function PortalUsuariosPage() {
   }, []);
 
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => { if (!editing) setShowPass(false); }, [editing]);
 
   async function save() {
     if (!editing) return;
@@ -187,7 +189,24 @@ export default function PortalUsuariosPage() {
                 </select>
               </Field>
               <Field label={editing.id ? "Nueva contraseña (dejá vacío para no cambiar)" : "Contraseña *"}>
-                <input type="password" className={inputClass} placeholder="Mínimo 6 caracteres" value={editing.password} onChange={(e) => setEditing({ ...editing, password: e.target.value })} />
+                <div className="relative">
+                  <input
+                    type={showPass ? "text" : "password"}
+                    className={`${inputClass} pr-9`}
+                    placeholder="Mínimo 6 caracteres"
+                    value={editing.password}
+                    onChange={(e) => setEditing({ ...editing, password: e.target.value })}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPass(!showPass)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+                    aria-label={showPass ? "Ocultar contraseña" : "Mostrar contraseña"}
+                    title={showPass ? "Ocultar" : "Mostrar"}
+                  >
+                    {showPass ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
               </Field>
               <label className="inline-flex items-center gap-2 text-sm">
                 <input type="checkbox" checked={editing.activo} onChange={(e) => setEditing({ ...editing, activo: e.target.checked })} />
