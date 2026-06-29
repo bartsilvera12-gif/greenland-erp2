@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { AlertTriangle } from "lucide-react";
 
 type Variant = "danger" | "neutral";
@@ -47,15 +48,19 @@ export default function ConfirmModal({
     return () => window.removeEventListener("keydown", onKey);
   }, [open, loading, onClose]);
 
-  if (!open) return null;
+  // Mounted gate para que el portal solo se cree client-side (evita SSR mismatch).
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
+
+  if (!open || !mounted) return null;
 
   const confirmCls = variant === "danger"
     ? "bg-red-600 hover:bg-red-700"
     : "bg-[#4FAEB2] hover:bg-[#3F8E91]";
 
-  return (
+  return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
       onClick={() => { if (!loading) onClose(); }}
     >
       <div
@@ -94,6 +99,7 @@ export default function ConfirmModal({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
