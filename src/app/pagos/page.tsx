@@ -6,6 +6,7 @@ import { Banknote, Loader2 } from "lucide-react";
 import { fetchWithSupabaseSession } from "@/lib/api/fetch-with-supabase-session";
 import { generarYAbrirRecibo } from "@/lib/recibos/client";
 import { RegistrarCobroModalCxc } from "@/components/cobros/RegistrarCobroModalCxc";
+import SearchableSelect, { type SearchableOption } from "@/components/ui/SearchableSelect";
 
 type Cuenta = {
   id: string;
@@ -68,6 +69,7 @@ export default function PagosPage() {
   const [tab, setTab] = useState<"pendientes" | "cobrados">("pendientes");
   const [desde, setDesde] = useState("");
   const [hasta, setHasta] = useState("");
+  const [filtroClienteId, setFiltroClienteId] = useState("");
   const [toast, setToast] = useState<string | null>(null);
 
   const [cobrando, setCobrando] = useState<Cuenta | null>(null);
@@ -112,14 +114,27 @@ export default function PagosPage() {
     () =>
       cuentas
         .filter((c) => c.saldo > 0 && c.estado !== "anulado")
+        .filter((c) => !filtroClienteId || c.cliente_id === filtroClienteId)
         .filter((c) => (!desde && !hasta) ? true : (enRango(c.fecha_emision) || enRango(c.fecha_vencimiento))),
-    [cuentas, desde, hasta, enRango]
+    [cuentas, desde, hasta, enRango, filtroClienteId]
   );
   // Cobrados = historial de pagos. Filtro por fecha de pago.
   const cobradosVista = useMemo(
-    () => cobros.filter((c) => (!desde && !hasta) ? true : enRango(c.fecha_pago)),
-    [cobros, desde, hasta, enRango]
+    () => cobros
+      .filter((c) => !filtroClienteId || c.cliente_id === filtroClienteId)
+      .filter((c) => (!desde && !hasta) ? true : enRango(c.fecha_pago)),
+    [cobros, desde, hasta, enRango, filtroClienteId]
   );
+
+  // Opciones únicas de cliente extraídas del data cargado (sin fetch extra).
+  const clientesOpts = useMemo<SearchableOption[]>(() => {
+    const map = new Map<string, string>();
+    for (const c of cuentas) if (c.cliente_id) map.set(c.cliente_id, c.cliente_nombre || "Cliente");
+    for (const c of cobros) if (c.cliente_id) map.set(c.cliente_id, c.cliente_nombre || "Cliente");
+    const list = [...map.entries()].map(([id, nombre]) => ({ id, label: nombre }));
+    list.sort((a, b) => a.label.localeCompare(b.label));
+    return [{ id: "", label: "— Todos los clientes —" }, ...list];
+  }, [cuentas, cobros]);
 
   const sumPend = useMemo(
     () => pendientes.reduce((a, c) => ({ total: a.total + c.total, saldo: a.saldo + c.saldo }), { total: 0, saldo: 0 }),
@@ -131,7 +146,7 @@ export default function PagosPage() {
     setCobrando(c);
   }
 
-  const hayFiltro = !!desde || !!hasta;
+  const hayFiltro = !!desde || !!hasta || !!filtroClienteId;
 
   return (
     <div className="w-full min-w-0 max-w-full space-y-6">
@@ -148,8 +163,18 @@ export default function PagosPage() {
             <p className="text-sm text-gray-500">Cuentas por cobrar de ventas a crédito y registro de cobros.</p>
           </div>
         </div>
-        {/* Filtro de fechas */}
+        {/* Filtros */}
         <div className="flex flex-wrap items-end gap-2">
+          <div className="min-w-[220px]">
+            <label className="block text-[11px] font-medium text-slate-500 mb-1">Cliente</label>
+            <SearchableSelect
+              value={filtroClienteId}
+              onChange={setFiltroClienteId}
+              options={clientesOpts}
+              placeholder="Todos los clientes"
+              emptyText="Sin clientes que coincidan"
+            />
+          </div>
           <div>
             <label className="block text-[11px] font-medium text-slate-500 mb-1">Desde</label>
             <input type="date" value={desde} onChange={(e) => setDesde(e.target.value)} className={inputClass} />
@@ -159,7 +184,7 @@ export default function PagosPage() {
             <input type="date" value={hasta} onChange={(e) => setHasta(e.target.value)} className={inputClass} />
           </div>
           {hayFiltro && (
-            <button type="button" onClick={() => { setDesde(""); setHasta(""); }} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50">
+            <button type="button" onClick={() => { setDesde(""); setHasta(""); setFiltroClienteId(""); }} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50">
               Limpiar
             </button>
           )}
