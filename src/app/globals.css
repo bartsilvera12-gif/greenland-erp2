@@ -339,5 +339,40 @@ select option:checked {
   color: rgb(15 23 42); /* slate-900 */
 }
 
+/* =============================================================================
+   Selects más pulidos en toda la app — sin tocar JSX.
+   - accent-color: en Chromium moderno cambia el color del highlight del item
+     activo en el dropdown nativo (de azul OS → turquesa marca).
+   - sombra suave en hover/focus para look más premium.
+   - altura mínima homogénea, evita selects "aplastados" en algunos forms.
+   ============================================================================= */
+select:not([multiple]):not([size]) {
+  accent-color: #4FAEB2;
+  color-scheme: light;
+  min-height: 2.5rem;
+  letter-spacing: 0.005em;
+}
+
+select:not([multiple]):not([size]):not(:disabled):hover {
+  box-shadow: 0 1px 3px rgba(79, 174, 178, 0.10);
+  border-color: rgba(79, 174, 178, 0.55);
+}
+
+select:not([multiple]):not([size]):focus {
+  box-shadow: 0 0 0 3px var(--ring-primary), 0 1px 3px rgba(79, 174, 178, 0.12);
+}
+
+/* También a inputs y textareas para coherencia visual del set de formularios. */
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):hover,
+textarea:hover {
+  border-color: rgba(79, 174, 178, 0.45);
+}
+
+/* Checkbox y radio nativos: chequea con el color turquesa marca. */
+input[type="checkbox"],
+input[type="radio"] {
+  accent-color: #4FAEB2;
+}
+
 
 
