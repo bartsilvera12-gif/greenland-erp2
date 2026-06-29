@@ -1,1109 +1,344 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import MontoInput from "@/components/ui/MontoInput";
-import ProductPickerModal, { type ProductoPickerItem, type AgregarVentaPayload } from "@/components/inventario/ProductPickerModal";
-import { saveVenta, type FaltanteStock } from "@/lib/ventas/storage";
-import { getProductos } from "@/lib/inventario/storage";
-import type { TipoIvaVenta, TipoVenta, MonedaVenta, LineaVenta, MetodoPago, TipoPrecioVenta } from "@/lib/ventas/types";
-import type { Producto } from "@/lib/inventario/types";
+import { Plus, Trash2 } from "lucide-react";
+import { fetchWithSupabaseSession } from "@/lib/api/fetch-with-supabase-session";
 
-// ── Helpers ────────────────────────────────────────────────────────────────────
+type Moneda = "GS" | "USD";
+type TipoIva = "EXENTA" | "5%" | "10%";
+type TipoVenta = "CONTADO" | "CREDITO";
 
-function formatGs(valor: number) {
-  return `Gs. ${Math.round(valor).toLocaleString("es-PY")}`;
+interface Servicio {
+  descripcion: string;
+  monto: number | "";
 }
 
-/**
- * IVA INFORMATIVO (Autorepuestos Felix Bogado): el precio NO incluye IVA y el
- * IVA tampoco se suma al total. `subtotal` es precio × cantidad y `total línea`
- * es igual al subtotal. Sólo se calcula el monto de IVA para mostrarlo a modo
- * informativo (subtotal × tasa).
- *   EXENTA → 0 · 5% → subtotal × 0.05 · 10% → subtotal × 0.10
- */
-function calcIva(tipo: TipoIvaVenta, subtotal: number) {
-  if (tipo === "EXENTA") return 0;
-  if (tipo === "5%")     return subtotal * 0.05;
-  return subtotal * 0.10;
+interface ClienteOpt {
+  id: string;
+  empresa: string | null;
+  nombre_contacto: string | null;
+  ruc: string | null;
+  documento: string | null;
 }
 
-/**
- * Precio unitario (Gs.) según el tipo elegido, con fallbacks:
- *  minorista → precio_venta;
- *  mayorista → precio_mayorista (>0) o fallback a precio_venta;
- *  costo     → costo_promedio.
- */
-function precioPorTipo(p: Producto, tipo: TipoPrecioVenta): number {
-  if (tipo === "mayorista") return p.precio_mayorista != null && p.precio_mayorista > 0 ? p.precio_mayorista : p.precio_venta;
-  if (tipo === "distribuidor") return p.precio_distribuidor != null && p.precio_distribuidor > 0 ? p.precio_distribuidor : p.precio_venta;
-  if (tipo === "costo") return p.costo_promedio ?? 0; // histórico: ya no se ofrece en la UI
-  return p.precio_venta;
+function fmt(n: number, m: Moneda) {
+  const sym = m === "USD" ? "USD" : "Gs.";
+  return `${sym} ${Math.round(n).toLocaleString("es-PY")}`;
 }
-
-/** Tipos de precio ofrecidos en la UI (sin 'costo', que queda solo como histórico). */
-const TIPOS_PRECIO_UI: TipoPrecioVenta[] = ["minorista", "mayorista", "distribuidor"];
-
-const tipoPrecioLabel: Record<TipoPrecioVenta, string> = {
-  minorista: "Minorista",
-  mayorista: "Mayorista",
-  distribuidor: "Distribuidor",
-  costo: "Al costo",
-};
-
-// ── Estilos ────────────────────────────────────────────────────────────────────
-
-const inputClass =
-  "w-full border border-slate-200 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-[#0EA5E9] focus:outline-none bg-white text-sm";
-const labelClass = "block text-sm font-medium text-slate-700 mb-1.5";
-
-// ── Sub-componentes ───────────────────────────────────────────────────────────
-
-function SegmentedControl<T extends string>({
-  value,
-  options,
-  onChange,
-  disabled,
-}: {
-  value: T;
-  options: { value: T; label: string }[];
-  onChange: (v: T) => void;
-  disabled?: boolean;
-}) {
-  return (
-    <div className={`flex border border-slate-200 rounded-lg overflow-hidden ${disabled ? "opacity-50 cursor-not-allowed" : ""}`}>
-      {options.map((opt) => (
-        <button
-          key={opt.value}
-          type="button"
-          disabled={disabled}
-          onClick={() => onChange(opt.value)}
-          className={`flex-1 py-2 text-sm font-medium transition-colors ${
-            value === opt.value
-              ? "bg-[#0EA5E9] text-white"
-              : "bg-white text-slate-600 hover:bg-slate-50"
-          }`}
-        >
-          {opt.label}
-        </button>
-      ))}
-    </div>
-  );
+function num(v: string | number): number {
+  if (typeof v === "number") return v;
+  const n = Number(String(v).replace(/[^\d.-]/g, ""));
+  return Number.isFinite(n) ? n : 0;
 }
-
-function SectionTitle({ children }: { children: React.ReactNode }) {
-  return (
-    <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-3">
-      {children}
-    </p>
-  );
-}
-
-const ivaLabel: Record<TipoIvaVenta, string> = {
-  EXENTA: "Exenta",
-  "5%":   "5%",
-  "10%":  "10%",
-};
-
-// ── Componente principal ───────────────────────────────────────────────────────
 
 export default function NuevaVentaPage() {
   const router = useRouter();
 
-  // ── Estado global ──────────────────────────────────────────────────────────
-  const [productos, setProductos]   = useState<Producto[]>([]);
-  const [items, setItems]           = useState<LineaVenta[]>([]);
-  const [errorLinea, setErrorLinea] = useState<string | null>(null);
-  const [errorVenta, setErrorVenta] = useState<string | null>(null);
-  // Venta sin stock: faltantes devueltos por el backend + modal de confirmación.
-  const [faltantes, setFaltantes] = useState<FaltanteStock[]>([]);
-  const [confirmSinStockOpen, setConfirmSinStockOpen] = useState(false);
-  // Guard anti doble-submit: estado para UI (botón/spinner) + ref para bloqueo síncrono
-  // inmediato (React puede tardar en aplicar el estado; el ref corta el segundo disparo ya).
-  const [guardando, setGuardando] = useState(false);
-  const isSubmittingRef = useRef(false);
+  const [clientes, setClientes] = useState<ClienteOpt[]>([]);
+  const [clienteId, setClienteId] = useState<string>("");
+  const [razonSocial, setRazonSocial] = useState("");
+  const [ruc, setRuc] = useState("");
+  const [documento, setDocumento] = useState("");
 
-  // Facturación de un pedido enviado a Caja (?pedido_id=...). Precarga items + cliente.
-  const [pedidoId, setPedidoId] = useState<string | null>(null);
-  const [pedidoNumero, setPedidoNumero] = useState<string | null>(null);
-
-  // ── Condiciones de la venta ───────────────────────────────────────────────
-  // Instancia dedicada: siempre Guaraníes.
-  const moneda: MonedaVenta = "GS";
-
-  // Contado / Crédito (campos ya existentes en `ventas`: tipo_venta + plazo_dias).
+  const [moneda, setMoneda] = useState<Moneda>("GS");
+  const [tipoIva, setTipoIva] = useState<TipoIva>("10%");
+  const [servicios, setServicios] = useState<Servicio[]>([{ descripcion: "", monto: "" }]);
   const [tipoVenta, setTipoVenta] = useState<TipoVenta>("CONTADO");
-  const [plazoDias, setPlazoDias] = useState("");
+  const [cuotasCantidad, setCuotasCantidad] = useState<number>(12);
+  const [cuotaMonto, setCuotaMonto] = useState<number | "">("");
+  const [fechaPrimeraCuota, setFechaPrimeraCuota] = useState<string>("");
+  const [intervaloDias, setIntervaloDias] = useState<number>(30);
+  const [observaciones, setObservaciones] = useState("");
 
-  // Cliente (opcional). Si se selecciona, se envía cliente_id al crear la venta.
-  type ClienteLite = { id: string; label: string; ruc: string | null; usa_nota_remision: boolean };
-  const [clientes, setClientes] = useState<ClienteLite[]>([]);
-  const [clienteId, setClienteId] = useState("");
-  const [clienteQuery, setClienteQuery] = useState("");
-  const [clienteOpen, setClienteOpen] = useState(false);
-  const clienteContainerRef = useRef<HTMLDivElement>(null);
-  // Nota de remisión: activada si el cliente la usa; toggle manual solo con cliente.
-  const [generaNotaRemision, setGeneraNotaRemision] = useState(false);
-
-  // ── Cobro (solo CONTADO, no se persiste — solo ayuda al cajero) ───────────
-  const [montoRecibido, setMontoRecibido] = useState("");
-  const [metodoPago, setMetodoPago] = useState<MetodoPago>("efectivo");
-
-  // ── Detalle de cobro (conciliación bancaria) ──────────────────────────────
-  const [entidades, setEntidades] = useState<{ id: string; codigo: string | null; nombre: string; tipo: string | null }[]>([]);
-  const [pagoEntidadId, setPagoEntidadId] = useState("");
-  const [pagoReferencia, setPagoReferencia] = useState("");
-  const [pagoTitular, setPagoTitular] = useState("");
-  const [pagoObservacion] = useState("");
-  // Modal de cobro (transferencia / tarjeta) + buscador de entidad.
-  const [cobroModalOpen, setCobroModalOpen] = useState(false);
-  const [entidadQuery, setEntidadQuery] = useState("");
-
-  // ── Línea en construcción ─────────────────────────────────────────────────
-  const [lineaProdId, setLineaProdId] = useState("");
-  const [lineaCant,   setLineaCant]   = useState("");
-  const [lineaPrecio, setLineaPrecio] = useState("");
-  const [lineaIva,    setLineaIva]    = useState<TipoIvaVenta>("EXENTA");
-  const [lineaTipoPrecio, setLineaTipoPrecio] = useState<TipoPrecioVenta>("minorista");
-
-  // ── Combobox de producto ───────────────────────────────────────────────────
-  const [comboQuery,     setComboQuery]     = useState("");
-  const [comboOpen,      setComboOpen]      = useState(false);
-  const [comboHighlight, setComboHighlight] = useState(-1);
-  const comboInputRef    = useRef<HTMLInputElement>(null);
-  const comboContainerRef = useRef<HTMLDivElement>(null);
-
-  // ── Modal buscador (F3) ────────────────────────────────────────────────────
-  const [pickerOpen, setPickerOpen] = useState(false);
-
-  function pickerToProducto(p: ProductoPickerItem): Producto {
-    return {
-      id: p.id,
-      nombre: p.nombre,
-      sku: p.sku,
-      precio_venta: p.precio_venta,
-      precio_mayorista: p.precio_mayorista ?? null,
-      precio_distribuidor: p.precio_distribuidor ?? null,
-      stock_actual: p.stock_actual,
-      unidad_medida: p.unidad_medida,
-      costo_promedio: p.costo_promedio ?? 0,
-      stock_minimo: 0,
-      metodo_valuacion: "CPP",
-      codigo_barras: p.codigo_barras,
-      codigo_barras_interno: p.codigo_barras_interno,
-      imagen_path: null,
-      imagen_url: p.imagen_url,
-    };
-  }
-
-  function handleSelectFromPicker(p: ProductoPickerItem) {
-    const prod = pickerToProducto(p);
-    setProductos((prev) => (prev.find((x) => x.id === prod.id) ? prev : [...prev, prod]));
-    seleccionarProducto(prod);
-    setPickerOpen(false);
-  }
-
-  /**
-   * Agregado directo desde el modal: arma la LineaVenta usando la misma
-   * logica que handleAgregarLinea pero con datos del modal, sin pasar
-   * por el form inline. Mantiene el modal abierto si todo OK.
-   */
-  function handleAgregarDesdePicker(payload: AgregarVentaPayload): boolean {
-    const { producto: p, cantidad, precio_input, iva, tipo_precio } = payload;
-    const precioPyg = precio_input;
-    // Verificar stock vs lo ya cargado SOLO si el producto controla stock.
-    // Venta sin stock (Fase 5): NO se bloquea por falta de stock al agregar; la
-    // confirmación se pide al registrar la venta. El Menú (controla_stock=false) tampoco valida.
-    // IVA informativo: el subtotal es precio × cantidad y el total de la línea
-    // es igual al subtotal. El monto de IVA se calcula sólo para mostrarse en
-    // ticket/recibo, no se suma al total.
-    const subtotal = cantidad * precioPyg;
-    const montoIva = calcIva(iva, subtotal);
-    const totalLinea = subtotal;
-
-    // Asegurar que el producto este en el array local (para que stock_actual
-    // se conozca en validaciones posteriores del form inline).
-    const prodLocal = pickerToProducto(p);
-    setProductos((prev) => (prev.find((x) => x.id === prodLocal.id) ? prev : [...prev, prodLocal]));
-
-    setItems((prev) => [
-      ...prev,
-      {
-        producto_id: p.id,
-        producto_nombre: p.nombre,
-        sku: p.sku,
-        cantidad,
-        precio_venta_original: precio_input,
-        precio_venta: precioPyg,
-        tipo_iva: iva,
-        tipo_precio,
-        subtotal,
-        monto_iva: montoIva,
-        total_linea: totalLinea,
-      },
-    ]);
-    setErrorVenta(null);
-    return true;
-  }
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    let cancelled = false;
-    getProductos().then((data) => {
-      if (!cancelled) setProductos(data);
-    });
-    return () => { cancelled = true; };
-  }, []);
-
-  // Precarga al facturar un pedido (Caja): lee ?pedido_id=, trae el pedido y carga sus
-  // items + cliente en el carrito. NO crea nada acá; la venta se genera al confirmar.
-  useEffect(() => {
-    let cancelled = false;
-    let pid: string | null = null;
-    try {
-      pid = new URLSearchParams(window.location.search).get("pedido_id");
-    } catch { pid = null; }
-    if (!pid) return;
-    setPedidoId(pid);
-    (async () => {
+    void (async () => {
       try {
-        const res = await fetch(`/api/pedidos-caja/${pid}`, { credentials: "include", cache: "no-store" });
-        const j = await res.json();
-        if (cancelled || !j?.success || !j.data?.pedido) return;
-        const p = j.data.pedido as {
-          titulo?: string;
-          cliente_id?: string | null;
-          items?: Array<{ producto_id: string; producto_nombre: string; sku: string | null; cantidad: number; precio_venta: number; tipo_precio: "minorista" | "mayorista" }>;
-        };
-        setPedidoNumero(p.titulo ?? null);
-        const lineas: LineaVenta[] = (p.items ?? [])
-          .filter((it) => it.producto_id && (Number(it.cantidad) || 0) > 0)
-          .map((it) => {
-            const cantidad = Number(it.cantidad) || 0;
-            const precio = Number(it.precio_venta) || 0;
-            const iva: TipoIvaVenta = "EXENTA";
-            // IVA informativo: subtotal = precio × cantidad; total línea = subtotal.
-            const subtotal = cantidad * precio;
-            const montoIva = calcIva(iva, subtotal);
-            const totalLinea = subtotal;
-            return {
-              producto_id: String(it.producto_id),
-              producto_nombre: it.producto_nombre ?? "",
-              sku: it.sku ?? "",
-              cantidad,
-              precio_venta_original: precio,
-              precio_venta: precio,
-              tipo_iva: iva,
-              tipo_precio: (it.tipo_precio === "mayorista" ? "mayorista" : "minorista") as TipoPrecioVenta,
-              subtotal,
-              monto_iva: montoIva,
-              total_linea: totalLinea,
-            };
-          });
-        if (!cancelled && lineas.length) setItems(lineas);
-        if (!cancelled && p.cliente_id) setClienteId(String(p.cliente_id));
-      } catch { /* el aviso seguirá visible; el cajero puede cargar manualmente */ }
+        const res = await fetchWithSupabaseSession("/api/clientes", { cache: "no-store" });
+        const json = await res.json();
+        const arr = Array.isArray(json?.data) ? (json.data as ClienteOpt[]) : [];
+        setClientes(arr);
+      } catch { /* sin clientes */ }
     })();
-    return () => { cancelled = true; };
   }, []);
 
-  // Cargar entidades bancarias (caja/banco/tarjeta/billetera) para el detalle de cobro.
-  useEffect(() => {
-    let cancelled = false;
-    fetch("/api/entidades-bancarias", { credentials: "include", cache: "no-store" })
-      .then((r) => r.json())
-      .then((j) => { if (!cancelled && j?.success) setEntidades(j.data?.entidades ?? []); })
-      .catch(() => { /* no bloquea la venta si falla */ });
-    return () => { cancelled = true; };
-  }, []);
+  function onClienteSelected(id: string) {
+    setClienteId(id);
+    const c = clientes.find((x) => x.id === id);
+    if (c) {
+      setRazonSocial((c.empresa ?? c.nombre_contacto ?? "").trim());
+      setRuc(c.ruc ?? "");
+      setDocumento(c.documento ?? "");
+    }
+  }
 
-  // Cargar clientes (buscador opcional de cliente en la venta).
-  useEffect(() => {
-    let cancelled = false;
-    fetch("/api/clientes", { credentials: "include", cache: "no-store" })
-      .then((r) => r.json())
-      .then((j) => {
-        if (cancelled || !j?.success || !Array.isArray(j.data)) return;
-        const s = (v: unknown) => (typeof v === "string" ? v.trim() : "");
-        const lite: ClienteLite[] = (j.data as Record<string, unknown>[]).map((r) => ({
-          id: String(r.id),
-          label: s(r.empresa) || s(r.nombre_contacto) || s(r.nombre) || "Cliente",
-          ruc: s(r.ruc) || null,
-          usa_nota_remision: r.usa_nota_remision === true,
-        }));
-        setClientes(lite);
-      })
-      .catch(() => { /* el buscador de cliente es opcional, no bloquea la venta */ });
-    return () => { cancelled = true; };
-  }, []);
+  const total = useMemo(
+    () => servicios.reduce((acc, s) => acc + (num(s.monto) || 0), 0),
+    [servicios],
+  );
 
-  // UX rápida: abrir el buscador de productos al entrar (carrito vacío).
-  // Si el usuario lo cierra, sigue usando el formulario normal (no queda atrapado).
-  // EXCEPCIÓN: al facturar un pedido (?pedido_id=...) NO se auto-abre, porque el
-  // carrito viene precargado; el usuario usa el botón "+ Agregar producto" si quiere más.
-  // Se lee la URL directamente (no el estado pedidoId) para evitar la carrera de montaje.
-  useEffect(() => {
-    let tienePedido = false;
+  function updateServicio(idx: number, patch: Partial<Servicio>) {
+    setServicios((arr) => arr.map((s, i) => (i === idx ? { ...s, ...patch } : s)));
+  }
+  function addServicio() {
+    setServicios((arr) => [...arr, { descripcion: "", monto: "" }]);
+  }
+  function removeServicio(idx: number) {
+    setServicios((arr) => (arr.length <= 1 ? arr : arr.filter((_, i) => i !== idx)));
+  }
+
+  async function save() {
+    setError(null);
+    if (!razonSocial.trim()) { setError("La razón social del cliente es obligatoria"); return; }
+    const valid = servicios
+      .map((s) => ({ descripcion: s.descripcion.trim(), monto: num(s.monto) }))
+      .filter((s) => s.descripcion && s.monto > 0);
+    if (!valid.length) { setError("Cargá al menos una línea con descripción y monto"); return; }
+    if (tipoVenta === "CREDITO" && cuotasCantidad < 1) { setError("Cantidad de cuotas inválida"); return; }
+
+    setSaving(true);
     try {
-      tienePedido = !!new URLSearchParams(window.location.search).get("pedido_id");
-    } catch { tienePedido = false; }
-    if (!tienePedido) setPickerOpen(true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Cerrar dropdown al hacer clic fuera
-  useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
-      if (comboContainerRef.current && !comboContainerRef.current.contains(e.target as Node)) {
-        setComboOpen(false);
-      }
-      if (clienteContainerRef.current && !clienteContainerRef.current.contains(e.target as Node)) {
-        setClienteOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
-
-  // Scroll a la opción destacada en el dropdown
-  useEffect(() => {
-    if (comboHighlight >= 0) {
-      document.getElementById(`combo-opt-${comboHighlight}`)?.scrollIntoView({ block: "nearest" });
-    }
-  }, [comboHighlight]);
-
-  // ── Cálculos ───────────────────────────────────────────────────────────────
-  const tipoCambioNum = 1;
-
-  const prodSel     = productos.find((p) => p.id === lineaProdId);
-  const cantNum     = parseInt(lineaCant) || 0;
-  const precioInput = parseFloat(lineaPrecio) || 0;
-  const precioGs    = precioInput;
-
-  const enCarrito = items
-    .filter((i) => i.producto_id === lineaProdId)
-    .reduce((s, i) => s + i.cantidad, 0);
-  const prodSelControlaStock = prodSel ? prodSel.controla_stock !== false : true;
-  const stockDisp = (prodSel?.stock_actual ?? 0) - enCarrito;
-
-  // IVA informativo: subtotal = precio × cantidad; total línea = subtotal
-  // (no se suma IVA). El monto IVA queda visible para ticket/recibo.
-  const lineaSubtotal   = cantNum > 0 && precioGs > 0 ? cantNum * precioGs : 0;
-  const lineaMontoIva   = calcIva(lineaIva, lineaSubtotal);
-  const lineaTotalLinea = lineaSubtotal;
-
-  // Aviso de stock (no bloquea): si falta stock se permite agregar igual y se pide
-  // confirmación al confirmar la venta (venta sin stock con confirmación, Fase 5).
-  // Productos del Menú (controla_stock=false) no controlan stock.
-  const stockInsuf  = prodSel !== undefined && prodSelControlaStock && cantNum > 0 && cantNum > stockDisp;
-  const lineaValida =
-    !!prodSel && cantNum > 0 && precioGs > 0;
-
-  const totalSubtotal = items.reduce((s, i) => s + i.subtotal, 0);
-  const totalIva      = items.reduce((s, i) => s + i.monto_iva, 0);
-  const totalGeneral  = items.reduce((s, i) => s + i.total_linea, 0);
-  // Condición de venta: si es Crédito, exigir plazo de al menos 1 día.
-  const plazoDiasNum = parseInt(plazoDias) || 0;
-  // Crédito exige cliente seleccionado Y plazo/vencimiento (≥1 día). Genera cuenta por cobrar.
-  const creditoValido = tipoVenta === "CONTADO" || (plazoDiasNum >= 1 && !!clienteId);
-  const ventaValida   = items.length > 0 && creditoValido;
-
-  // Cliente (opcional) — selección + filtrado del buscador.
-  const clienteSel = clientes.find((c) => c.id === clienteId) ?? null;
-  const clientesFiltrados = (clienteQuery.trim() === ""
-    ? clientes
-    : clientes.filter((c) => {
-        const q = clienteQuery.toLowerCase();
-        return c.label.toLowerCase().includes(q) || (c.ruc ?? "").toLowerCase().includes(q);
-      })
-  ).slice(0, 50);
-
-  // Cobro: entidad seleccionada + filtrado por código/nombre.
-  const entidadSel = entidades.find((e) => e.id === pagoEntidadId) ?? null;
-  const entidadesFiltradas = (entidadQuery.trim() === ""
-    ? entidades
-    : entidades.filter((e) => {
-        const q = entidadQuery.toLowerCase();
-        return e.nombre.toLowerCase().includes(q) || (e.codigo ?? "").toLowerCase().includes(q);
-      })
-  ).slice(0, 50);
-
-  // Vuelto (solo informativo, no se persiste)
-  const montoRecibidoNum = parseFloat(montoRecibido) || 0;
-  const vuelto           = montoRecibidoNum - totalGeneral;
-
-  // ── Productos filtrados para el combobox ──────────────────────────────────
-  // Solo vendibles (Reventa + Menú). Excluye materia prima / insumos.
-  const productosVendibles = productos.filter((p) => p.es_vendible !== false);
-  const comboFiltrados = comboQuery.trim() === ""
-    ? productosVendibles
-    : productosVendibles.filter((p) => {
-        const q = comboQuery.toLowerCase();
-        return p.nombre.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q);
-      });
-
-  // ── Selección de un producto desde el combobox ────────────────────────────
-  function seleccionarProducto(p: Producto) {
-    setLineaProdId(String(p.id));
-    setLineaTipoPrecio("minorista");
-    setLineaPrecio(String(precioPorTipo(p, "minorista")));
-    setLineaCant("1");
-    setLineaIva("EXENTA");
-    setComboQuery(`${p.nombre} — ${p.sku}`);
-    setComboOpen(false);
-    setComboHighlight(-1);
-    setErrorLinea(null);
-  }
-
-  /** Selecciona método de cobro. Efectivo no pide datos; transferencia/tarjeta abren modal. */
-  function handleSelectMetodo(m: MetodoPago) {
-    setMetodoPago(m);
-    if (m === "efectivo") {
-      setCobroModalOpen(false);
-      // "Caja efectivo" por defecto si existe una entidad tipo caja.
-      const caja = entidades.find((e) => e.tipo === "caja");
-      setPagoEntidadId(caja ? caja.id : "");
-      setPagoTitular("");
-    } else {
-      setEntidadQuery("");
-      setCobroModalOpen(true);
-    }
-  }
-
-  /** Cambia el tipo de precio de la línea en construcción y ajusta el precio unitario. */
-  function handleLineaTipoPrecio(tipo: TipoPrecioVenta) {
-    setLineaTipoPrecio(tipo);
-    if (prodSel) setLineaPrecio(String(precioPorTipo(prodSel, tipo)));
-    setErrorLinea(null);
-  }
-
-  // ── Handlers del combobox ─────────────────────────────────────────────────
-  function handleComboInput(e: React.ChangeEvent<HTMLInputElement>) {
-    setComboQuery(e.target.value);
-    setComboOpen(true);
-    setComboHighlight(-1);
-    // Si el usuario borra el texto, limpiar la selección
-    if (e.target.value === "") {
-      setLineaProdId("");
-      setLineaPrecio("");
-      setLineaCant("");
-    }
-    setErrorLinea(null);
-  }
-
-  function handleComboKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
-      setComboOpen(true);
-      setComboHighlight((h) => Math.min(h + 1, comboFiltrados.length - 1));
-    } else if (e.key === "ArrowUp") {
-      e.preventDefault();
-      setComboHighlight((h) => Math.max(h - 1, 0));
-    } else if (e.key === "Enter") {
-      e.preventDefault();
-      if (comboOpen && comboHighlight >= 0 && comboFiltrados[comboHighlight]) {
-        // Seleccionar el ítem destacado del dropdown
-        seleccionarProducto(comboFiltrados[comboHighlight]);
-      } else if (!comboOpen && lineaValida) {
-        // Dropdown cerrado + producto válido → agregar al carrito
-        handleAgregarLinea();
-      }
-    } else if (e.key === "Escape") {
-      setComboOpen(false);
-      setComboHighlight(-1);
-    }
-  }
-
-  // ── Agregar línea al carrito ──────────────────────────────────────────────
-  function handleAgregarLinea() {
-    setErrorLinea(null);
-    if (!prodSel)          return setErrorLinea("Seleccioná un producto.");
-    if (cantNum <= 0)      return setErrorLinea("La cantidad debe ser mayor a 0.");
-    if (precioGs <= 0)     return setErrorLinea("El precio de venta debe ser mayor a 0.");
-    // Nota: si falta stock NO se bloquea; se confirma al registrar la venta.
-
-    setItems((prev) => [
-      ...prev,
-      {
-        producto_id:           prodSel.id,
-        producto_nombre:       prodSel.nombre,
-        sku:                   prodSel.sku,
-        cantidad:              cantNum,
-        precio_venta_original: precioInput,
-        precio_venta:          precioGs,
-        tipo_iva:              lineaIva,
-        tipo_precio:           lineaTipoPrecio,
-        subtotal:              lineaSubtotal,
-        monto_iva:             lineaMontoIva,
-        total_linea:           lineaTotalLinea,
-      },
-    ]);
-
-    // Limpiar línea y devolver foco al buscador de producto
-    setLineaProdId("");
-    setLineaCant("");
-    setLineaPrecio("");
-    setLineaIva("EXENTA");
-    setLineaTipoPrecio("minorista");
-    setComboQuery("");
-    setComboOpen(false);
-    setTimeout(() => comboInputRef.current?.focus(), 0);
-  }
-
-  function handleEliminarLinea(index: number) {
-    setItems((prev) => prev.filter((_, i) => i !== index));
-  }
-
-  /** Envía la venta. Con `permitirSinStock=true` autoriza vender aunque falte stock. */
-  async function enviarVenta(permitirSinStock: boolean) {
-    // Guard duro contra doble submit: si ya hay una confirmación en vuelo, cortar
-    // inmediatamente. El ref se evalúa de forma síncrona (no espera al re-render de React),
-    // así que un segundo click/Enter casi simultáneo no puede disparar otra venta.
-    if (isSubmittingRef.current) return;
-    isSubmittingRef.current = true;
-    setGuardando(true);
-    try {
-      const resultado = await saveVenta(
-        {
-          items,
+      const res = await fetchWithSupabaseSession("/api/ventas/servicio", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          cliente_id: clienteId || null,
+          cliente_razon_social: razonSocial,
+          cliente_ruc: ruc || null,
+          cliente_documento: documento || null,
           moneda,
-          tipo_cambio:  tipoCambioNum,
-          subtotal:     totalSubtotal,
-          monto_iva:    totalIva,
-          total:        totalGeneral,
-          tipo_venta:   tipoVenta,
-          plazo_dias:   tipoVenta === "CREDITO" ? plazoDiasNum : undefined,
-          metodo_pago:  metodoPago,
-          cliente_id:   clienteId || null,
-          genera_nota_remision: !!clienteId && generaNotaRemision,
-        },
-        undefined,
-        {
-          entidad_bancaria_id: pagoEntidadId || null,
-          entidad_nombre_snapshot: entidades.find((e) => e.id === pagoEntidadId)?.nombre ?? null,
-          referencia: pagoReferencia.trim() || null,
-          titular: metodoPago === "transferencia" ? pagoTitular.trim() || null : null,
-          observacion: pagoObservacion.trim() || null,
-        },
-        { permitirSinStock, pedidoId }
-      );
-
-      if (!resultado.success) {
-        // Falta stock sin autorizar → abrir modal de confirmación con el detalle.
-        // (El guard se libera en el finally para permitir confirmar sin stock.)
-        if (resultado.faltantes && resultado.faltantes.length > 0) {
-          setFaltantes(resultado.faltantes);
-          setConfirmSinStockOpen(true);
-          return;
-        }
-        setErrorVenta(resultado.error);
+          tipo_iva: tipoIva,
+          servicios: valid,
+          tipo_venta: tipoVenta,
+          cuotas_cantidad: tipoVenta === "CREDITO" ? cuotasCantidad : undefined,
+          cuota_monto: tipoVenta === "CREDITO" && cuotaMonto ? num(cuotaMonto) : undefined,
+          fecha_primera_cuota: tipoVenta === "CREDITO" ? fechaPrimeraCuota || undefined : undefined,
+          intervalo_dias: tipoVenta === "CREDITO" ? intervaloDias : undefined,
+          observaciones: observaciones || null,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json?.success) {
+        setError(json?.error ?? "No se pudo crear la venta");
+        setSaving(false);
         return;
       }
-      // Documentos de la venta. La nota de remisión se abre además del ticket
-      // SOLO si la venta la genera (cliente con usa_nota_remision o toggle activo).
-      const v = resultado.venta;
-      const generaNota = v.genera_nota_remision === true || !!v.nota_remision_numero;
-      const ticketUrl = `/api/ventas/${v.id}/ticket?mode=comandas&auto=1`;
-      const remisionUrl = `/api/ventas/${v.id}/ticket?tipo=remision&auto=1`;
-      // Intento de apertura automática (el ticket sale por el gesto de click; la
-      // segunda pestaña puede ser bloqueada por el navegador → fallback con botones).
-      try { window.open(ticketUrl, "_blank", "noopener"); } catch {}
-      if (generaNota) { try { window.open(remisionUrl, "_blank", "noopener"); } catch {} }
-      // Pedido del cliente: al guardar, redirigir directo a /ventas sin
-      // pasar por el modal de confirmación. El ticket se abre solo por el
-      // window.open de arriba (gesto del click). Si el navegador bloquea
-      // popups, se pierde — el usuario lo puede reimprimir desde el listado.
       router.push("/ventas");
-    } finally {
-      // Liberar el guard SIEMPRE: éxito, error o flujo de "confirmar sin stock".
-      isSubmittingRef.current = false;
-      setGuardando(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Error de red");
+      setSaving(false);
     }
   }
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setErrorVenta(null);
-    if (!ventaValida) return;
-    await enviarVenta(false);
-  }
-
-  async function confirmarVentaSinStock() {
-    setConfirmSinStockOpen(false);
-    setErrorVenta(null);
-    await enviarVenta(true);
-  }
-
-  // ── Render ────────────────────────────────────────────────────────────────
-
   return (
-    <div className="space-y-8">
+    <div className="space-y-6 px-4 py-4 md:px-6 md:py-6 max-w-4xl">
+      <header>
+        <Link href="/ventas" className="text-xs text-slate-500 hover:text-slate-800">← Volver al listado</Link>
+        <h1 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">Nueva venta</h1>
+        <p className="mt-1 text-sm text-slate-500">Cargá las líneas de servicio o cuotas y guardalas.</p>
+      </header>
 
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-2xl sm:text-3xl font-bold text-gray-800">Nueva venta</h1>
-          <p className="text-gray-600">
-            Agregá productos de reventa o del catálogo. Al confirmar se registra la venta.
-          </p>
+      <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm space-y-4">
+        <h2 className="text-sm font-semibold text-slate-800">Cliente</h2>
+        <div className="grid gap-4 md:grid-cols-2">
+          <div className="md:col-span-2">
+            <label className={labelCls}>Buscar cliente existente</label>
+            <select
+              className={inputCls}
+              value={clienteId}
+              onChange={(e) => onClienteSelected(e.target.value)}
+            >
+              <option value="">— Cliente nuevo (cargar manual) —</option>
+              {clientes.map((c) => {
+                const n = (c.empresa ?? c.nombre_contacto ?? "Cliente").trim();
+                const doc = c.ruc || c.documento || "";
+                return (
+                  <option key={c.id} value={c.id}>{n}{doc ? ` · ${doc}` : ""}</option>
+                );
+              })}
+            </select>
+          </div>
+          <div className="md:col-span-2">
+            <label className={labelCls}>Razón social *</label>
+            <input className={inputCls} value={razonSocial} onChange={(e) => setRazonSocial(e.target.value)} />
+          </div>
+          <div>
+            <label className={labelCls}>RUC</label>
+            <input className={inputCls} value={ruc} onChange={(e) => setRuc(e.target.value)} />
+          </div>
+          <div>
+            <label className={labelCls}>CI / Documento</label>
+            <input className={inputCls} value={documento} onChange={(e) => setDocumento(e.target.value)} />
+          </div>
         </div>
+      </section>
+
+      <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-slate-800">Descripción de líneas</h2>
+          <button type="button" onClick={addServicio} className="inline-flex items-center gap-1 rounded-md bg-slate-100 px-2.5 py-1 text-xs text-slate-700 hover:bg-slate-200">
+            <Plus className="h-3 w-3" /> Agregar línea
+          </button>
+        </div>
+        <div className="space-y-2">
+          {servicios.map((s, i) => (
+            <div key={i} className="grid grid-cols-12 gap-2 items-start">
+              <div className="col-span-7">
+                <input
+                  className={inputCls}
+                  placeholder="Ej. Cuota Mz. A · Lote 12"
+                  value={s.descripcion}
+                  onChange={(e) => updateServicio(i, { descripcion: e.target.value })}
+                />
+              </div>
+              <div className="col-span-4">
+                <input
+                  className={inputCls}
+                  inputMode="numeric"
+                  placeholder="Monto"
+                  value={s.monto === "" ? "" : Number(s.monto).toLocaleString("es-PY")}
+                  onChange={(e) => updateServicio(i, { monto: num(e.target.value) })}
+                />
+              </div>
+              <div className="col-span-1 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => removeServicio(i)}
+                  disabled={servicios.length <= 1}
+                  className="rounded-md p-1.5 text-red-600 hover:bg-red-50 disabled:opacity-30"
+                  title="Quitar línea"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="flex items-center justify-between border-t border-slate-100 pt-3">
+          <span className="text-xs uppercase tracking-wider text-slate-500">Total</span>
+          <span className="text-xl font-bold tabular-nums text-slate-900">{fmt(total, moneda)}</span>
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <h2 className="mb-3 text-sm font-semibold text-slate-800">Moneda e IVA</h2>
+        <div className="grid gap-4 md:grid-cols-3">
+          <div>
+            <label className={labelCls}>Moneda</label>
+            <select className={inputCls} value={moneda} onChange={(e) => setMoneda(e.target.value as Moneda)}>
+              <option value="GS">Guaraníes (GS)</option>
+              <option value="USD">Dólares (USD)</option>
+            </select>
+          </div>
+          <div>
+            <label className={labelCls}>Tipo de IVA</label>
+            <select className={inputCls} value={tipoIva} onChange={(e) => setTipoIva(e.target.value as TipoIva)}>
+              <option value="EXENTA">Exenta</option>
+              <option value="5%">IVA 5%</option>
+              <option value="10%">IVA 10%</option>
+            </select>
+          </div>
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm space-y-4">
+        <h2 className="text-sm font-semibold text-slate-800">Tipo de venta</h2>
+        <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1">
+          {(["CONTADO", "CREDITO"] as TipoVenta[]).map((t) => (
+            <button
+              key={t}
+              type="button"
+              onClick={() => setTipoVenta(t)}
+              className={`rounded-md px-4 py-1.5 text-sm font-medium ${
+                tipoVenta === t ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:text-slate-800"
+              }`}
+            >
+              {t === "CONTADO" ? "Contado" : "Crédito"}
+            </button>
+          ))}
+        </div>
+
+        {tipoVenta === "CREDITO" && (
+          <div className="grid gap-4 md:grid-cols-4 rounded-lg bg-slate-50 p-4">
+            <div>
+              <label className={labelCls}>Cantidad de cuotas</label>
+              <input
+                type="number"
+                min={1}
+                max={120}
+                className={inputCls}
+                value={cuotasCantidad}
+                onChange={(e) => setCuotasCantidad(Math.max(1, Number(e.target.value) || 1))}
+              />
+            </div>
+            <div>
+              <label className={labelCls}>Monto por cuota</label>
+              <input
+                className={inputCls}
+                inputMode="numeric"
+                placeholder={cuotasCantidad > 0 ? Math.round(total / cuotasCantidad).toLocaleString("es-PY") : ""}
+                value={cuotaMonto === "" ? "" : Number(cuotaMonto).toLocaleString("es-PY")}
+                onChange={(e) => setCuotaMonto(num(e.target.value) || "")}
+              />
+              <p className="mt-1 text-[10px] text-slate-400">Vacío = se reparte el total automáticamente</p>
+            </div>
+            <div>
+              <label className={labelCls}>Primera cuota vence</label>
+              <input
+                type="date"
+                className={inputCls}
+                value={fechaPrimeraCuota}
+                onChange={(e) => setFechaPrimeraCuota(e.target.value)}
+              />
+            </div>
+            <div>
+              <label className={labelCls}>Cada (días)</label>
+              <input
+                type="number"
+                min={1}
+                className={inputCls}
+                value={intervaloDias}
+                onChange={(e) => setIntervaloDias(Math.max(1, Number(e.target.value) || 30))}
+              />
+            </div>
+          </div>
+        )}
+      </section>
+
+      <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <h2 className="mb-3 text-sm font-semibold text-slate-800">Observaciones</h2>
+        <textarea
+          rows={3}
+          className={inputCls}
+          value={observaciones}
+          onChange={(e) => setObservaciones(e.target.value)}
+        />
+      </section>
+
+      {error && (
+        <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div>
+      )}
+
+      <div className="flex justify-end gap-2">
+        <Link href="/ventas" className="rounded-md border border-slate-200 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">
+          Cancelar
+        </Link>
         <button
           type="button"
-          onClick={() => setPickerOpen(true)}
-          className="shrink-0 inline-flex items-center gap-1.5 rounded-lg bg-[#0EA5E9] px-4 py-2.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-[#0284C7] active:scale-95"
+          onClick={save}
+          disabled={saving}
+          className="inline-flex items-center gap-1.5 rounded-xl bg-[#4FAEB2] px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-[#3F8E91] disabled:opacity-50"
         >
-          + Agregar producto
+          {saving ? "Guardando…" : "Crear venta"}
         </button>
       </div>
-
-      {pedidoId && (
-        <div className="rounded-lg border border-[#4FAEB2]/40 bg-[#4FAEB2]/[0.08] px-4 py-3 text-sm text-slate-700">
-          <span className="font-semibold text-[#3F8E91]">Estás facturando un pedido{pedidoNumero ? ` (${pedidoNumero})` : ""}.</span>{" "}
-          La venta se generará al confirmar y el pedido quedará marcado como facturado. Podés ajustar items, precios y método de pago.
-        </div>
-      )}
-
-      <form onSubmit={handleSubmit} className="space-y-6 max-w-7xl">
-
-        {/* ── SECCIÓN 0: Datos de la venta (cliente opcional + condición) ────── */}
-        <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-4 sm:p-6">
-          <SectionTitle>Datos de la venta</SectionTitle>
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-
-            {/* Cliente (opcional) */}
-            <div ref={clienteContainerRef} className="relative">
-              <label className={labelClass}>
-                Cliente <span className="text-xs font-normal text-gray-400">(opcional)</span>
-              </label>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={clienteSel ? clienteSel.label : clienteQuery}
-                  onChange={(e) => { setClienteId(""); setClienteQuery(e.target.value); setClienteOpen(true); }}
-                  onFocus={() => setClienteOpen(true)}
-                  placeholder="Buscar por nombre o RUC…"
-                  className={`${inputClass} ${clienteSel ? "font-medium" : ""}`}
-                />
-                {clienteSel && (
-                  <button
-                    type="button"
-                    onClick={() => { setClienteId(""); setClienteQuery(""); setGeneraNotaRemision(false); }}
-                    className="shrink-0 rounded-lg border border-slate-200 px-3 text-xs text-slate-500 hover:bg-slate-50"
-                  >
-                    Quitar
-                  </button>
-                )}
-              </div>
-              {clienteOpen && !clienteSel && (
-                <div className="absolute z-20 mt-1 w-full max-h-64 overflow-auto rounded-lg border border-slate-200 bg-white shadow-lg">
-                  {clientesFiltrados.length === 0 ? (
-                    <p className="px-3 py-2 text-xs text-gray-400">Sin clientes que coincidan.</p>
-                  ) : (
-                    clientesFiltrados.map((c) => (
-                      <button
-                        key={c.id}
-                        type="button"
-                        onClick={() => { setClienteId(c.id); setClienteQuery(""); setClienteOpen(false); setGeneraNotaRemision(c.usa_nota_remision); }}
-                        className="block w-full text-left px-3 py-2 text-sm hover:bg-slate-50"
-                      >
-                        <span className="font-medium text-gray-800">{c.label}</span>
-                        {c.ruc && <span className="ml-2 text-xs text-gray-400">RUC {c.ruc}</span>}
-                        {c.usa_nota_remision && <span className="ml-2 text-[10px] rounded-full bg-sky-100 text-sky-700 px-1.5 py-0.5 font-semibold">Nota remisión</span>}
-                      </button>
-                    ))
-                  )}
-                </div>
-              )}
-              <p className="mt-1 text-[11px] text-gray-400">
-                Si no seleccionás cliente, la venta se registra sin cliente.
-              </p>
-
-              {/* Nota de remisión: solo con cliente. Si el cliente la usa, viene activada. */}
-              {clienteSel && (
-                <div className="mt-2 rounded-lg border border-sky-100 bg-sky-50/60 px-3 py-2">
-                  {clienteSel.usa_nota_remision && (
-                    <p className="mb-1.5 text-[11px] text-sky-700">
-                      Este cliente usa nota de remisión. Se generará junto al ticket.
-                    </p>
-                  )}
-                  <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer select-none">
-                    <input
-                      type="checkbox"
-                      checked={generaNotaRemision}
-                      onChange={(e) => setGeneraNotaRemision(e.target.checked)}
-                      className="h-4 w-4 rounded border-slate-300 text-[#0EA5E9] focus:ring-[#0EA5E9]"
-                    />
-                    Generar nota de remisión
-                  </label>
-                </div>
-              )}
-            </div>
-
-            {/* Condición: Contado / Crédito */}
-            <div>
-              <label className={labelClass}>Condición</label>
-              <SegmentedControl<TipoVenta>
-                value={tipoVenta}
-                options={[
-                  { value: "CONTADO", label: "Contado" },
-                  { value: "CREDITO", label: "Crédito" },
-                ]}
-                onChange={(v) => { setTipoVenta(v); if (v === "CONTADO") setPlazoDias(""); }}
-              />
-              {tipoVenta === "CREDITO" && (
-                <div className="mt-3">
-                  <label className={labelClass}>Plazo de crédito (días)</label>
-                  <input
-                    type="number"
-                    min={1}
-                    value={plazoDias}
-                    onChange={(e) => setPlazoDias(e.target.value)}
-                    placeholder="Ej: 30"
-                    className={`${inputClass} ${plazoDiasNum < 1 ? "border-red-300 bg-red-50" : ""}`}
-                  />
-                  {plazoDiasNum < 1 && (
-                    <p className="mt-1 text-[11px] text-red-600">Ingresá un plazo de al menos 1 día.</p>
-                  )}
-                  {!clienteId && (
-                    <p className="mt-1 text-[11px] text-red-600">La venta a crédito requiere un cliente seleccionado.</p>
-                  )}
-                  <p className="mt-1 text-[11px] text-slate-500">Al confirmar se genera una cuenta por cobrar por el total.</p>
-                </div>
-              )}
-            </div>
-
-          </div>
-        </div>
-
-        {/* ── SECCIÓN 3: Carrito + totales + confirmar ─────────────────────── */}
-        <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-4 sm:p-6">
-          <SectionTitle>Productos en esta venta</SectionTitle>
-
-          {items.length === 0 ? (
-            <div className="py-10 text-center text-gray-400 text-sm border-2 border-dashed border-gray-200 rounded-lg">
-              Todavía no agregaste productos a esta venta.
-            </div>
-          ) : (
-            <>
-              {/* min-w fuerza scroll horizontal en mobile (9 columnas).
-                  Columnas secundarias (SKU, Subtotal, IVA Gs) se ocultan
-                  progresivamente: en mobile solo Producto/Cant/Precio/Total/eliminar. */}
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[760px] sm:min-w-0 text-sm text-left">
-                  <thead>
-                    <tr className="bg-slate-50 text-slate-600 text-sm font-semibold">
-                      <th className="py-2.5 pr-3 font-medium">Producto</th>
-                      <th className="hidden py-2.5 pr-3 font-medium lg:table-cell">SKU</th>
-                      <th className="py-2.5 pr-3 font-medium text-right">Cant.</th>
-                      <th className="py-2.5 pr-3 font-medium text-right">Precio unit.</th>
-                      <th className="hidden py-2.5 pr-3 text-center font-medium lg:table-cell">IVA</th>
-                      <th className="py-2.5 pr-3 font-medium text-right hidden lg:table-cell">Subtotal</th>
-                      <th className="py-2.5 pr-3 font-medium text-right hidden lg:table-cell">IVA Gs.</th>
-                      <th className="py-2.5 pr-3 font-medium text-right">Total</th>
-                      <th className="py-2.5 font-medium"></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {items.map((item, idx) => (
-                      <tr key={idx} className="border-b border-slate-200 last:border-0 hover:bg-slate-50 transition-colors">
-                        <td className="py-3 pr-3 font-medium text-gray-800">
-                          <span>{item.producto_nombre}</span>
-                          <span className={`ml-2 inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold align-middle ${
-                            item.tipo_precio === "mayorista" ? "bg-indigo-100 text-indigo-700"
-                            : item.tipo_precio === "distribuidor" ? "bg-emerald-100 text-emerald-700"
-                            : item.tipo_precio === "costo" ? "bg-amber-100 text-amber-700"
-                            : "bg-slate-100 text-slate-600"
-                          }`}>
-                            {tipoPrecioLabel[item.tipo_precio ?? "minorista"]}
-                          </span>
-                        </td>
-                        <td className="hidden py-3 pr-3 font-mono text-xs text-gray-500 lg:table-cell">
-                          {item.sku}
-                        </td>
-                        <td className="py-3 pr-3 text-right tabular-nums">
-                          {item.cantidad}
-                        </td>
-                        <td className="py-3 pr-3 text-right tabular-nums text-gray-600 text-xs">
-                          {formatGs(item.precio_venta)}
-                        </td>
-                        <td className="hidden py-3 pr-3 text-center lg:table-cell">
-                          <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-gray-100 text-gray-600">
-                            {ivaLabel[item.tipo_iva]}
-                          </span>
-                        </td>
-                        <td className="py-3 pr-3 text-right tabular-nums text-gray-600 text-xs hidden lg:table-cell">
-                          {formatGs(item.subtotal)}
-                        </td>
-                        <td className="py-3 pr-3 text-right tabular-nums text-gray-500 text-xs hidden lg:table-cell">
-                          {item.monto_iva > 0 ? formatGs(item.monto_iva) : "—"}
-                        </td>
-                        <td className="py-3 pr-3 text-right tabular-nums font-semibold text-gray-800">
-                          {formatGs(item.total_linea)}
-                        </td>
-                        <td className="py-3 text-center">
-                          <button
-                            type="button"
-                            onClick={() => handleEliminarLinea(idx)}
-                            className="inline-flex items-center justify-center min-w-[40px] min-h-[40px] text-red-400 hover:text-red-700 transition-colors rounded hover:bg-red-50"
-                            title="Eliminar producto"
-                          >
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
-                              <path fillRule="evenodd" d="M8.75 1A2.75 2.75 0 0 0 6 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 1 0 .23 1.482l.149-.022.841 10.518A2.75 2.75 0 0 0 7.596 19h4.807a2.75 2.75 0 0 0 2.742-2.53l.841-10.52.149.023a.75.75 0 0 0 .23-1.482A41.03 41.03 0 0 0 14 4.193V3.75A2.75 2.75 0 0 0 11.25 1h-2.5ZM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4ZM8.58 7.72a.75.75 0 0 0-1.5.06l.3 7.5a.75.75 0 1 0 1.5-.06l-.3-7.5Zm4.34.06a.75.75 0 1 0-1.5-.06l-.3 7.5a.75.75 0 1 0 1.5.06l.3-7.5Z" clipRule="evenodd" />
-                            </svg>
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              {/* Totales + Cobro (vuelto) */}
-              <div className="mt-5 flex justify-end">
-                <div className="w-full space-y-3 lg:w-80">
-                  <div className="space-y-1.5">
-                    <div className="flex justify-between text-sm text-gray-600">
-                      <span>Subtotal</span>
-                      <span className="tabular-nums font-medium">{formatGs(totalSubtotal)}</span>
-                    </div>
-                    <div className="flex justify-between text-sm text-gray-600">
-                      <span>IVA</span>
-                      <span className="tabular-nums font-medium">
-                        {totalIva > 0 ? formatGs(totalIva) : "—"}
-                      </span>
-                    </div>
-                    <div className="flex justify-between text-base font-bold text-gray-900 pt-2 border-t border-gray-200">
-                      <span>TOTAL</span>
-                      <span className="tabular-nums">{formatGs(totalGeneral)}</span>
-                    </div>
-                  </div>
-
-                  {tipoVenta === "CONTADO" && (
-                    <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2.5">
-                      <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Cobro</p>
-                      <div className="grid grid-cols-3 gap-1.5">
-                        {([
-                          { v: "efectivo", label: "Efectivo" },
-                          { v: "transferencia", label: "Transferencia" },
-                          { v: "tarjeta", label: "Tarjeta/Débito" },
-                        ] as { v: MetodoPago; label: string }[]).map((m) => (
-                          <button
-                            key={m.v}
-                            type="button"
-                            onClick={() => handleSelectMetodo(m.v)}
-                            className={`text-xs py-2 rounded-md border transition-colors ${
-                              metodoPago === m.v
-                                ? "border-[#0EA5E9] bg-[#0EA5E9]/10 text-[#0EA5E9] font-medium"
-                                : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-                            }`}
-                          >
-                            {m.label}
-                          </button>
-                        ))}
-                      </div>
-
-                      {/* Efectivo: monto recibido + vuelto, sin datos extra */}
-                      {metodoPago === "efectivo" && (
-                        <div className="space-y-1.5">
-                          <MontoInput
-                            value={montoRecibido}
-                            onChange={(n) => setMontoRecibido(String(n))}
-                            placeholder="Monto recibido (Gs.) — opcional"
-                            className={inputClass}
-                            decimals={false}
-                          />
-                          {montoRecibidoNum > 0 && (
-                            <div className="flex justify-between text-sm">
-                              <span className="text-gray-600">{vuelto >= 0 ? "Vuelto" : "Falta"}</span>
-                              <span className={`font-bold tabular-nums ${vuelto >= 0 ? "text-emerald-600" : "text-red-600"}`}>
-                                {formatGs(Math.abs(vuelto))}
-                              </span>
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                      {/* Transferencia / Tarjeta: resumen compacto + editar */}
-                      {(metodoPago === "transferencia" || metodoPago === "tarjeta") && (
-                        <div className="rounded-md border border-slate-200 bg-white px-3 py-2 text-xs space-y-1">
-                          <div className="flex items-center justify-between">
-                            <span className="font-medium text-slate-700">
-                              {metodoPago === "transferencia" ? "Transferencia" : "Tarjeta / Débito"}
-                            </span>
-                            <button type="button" onClick={() => { setEntidadQuery(""); setCobroModalOpen(true); }} className="text-sky-600 font-medium hover:underline">
-                              Editar
-                            </button>
-                          </div>
-                          <p className="text-slate-500">
-                            Entidad: <span className="text-slate-700">{entidadSel ? `${entidadSel.codigo ? entidadSel.codigo + " · " : ""}${entidadSel.nombre}` : "— sin especificar —"}</span>
-                          </p>
-                          {pagoReferencia.trim() && <p className="text-slate-500">Comprobante: <span className="text-slate-700">{pagoReferencia}</span></p>}
-                          {metodoPago === "transferencia" && pagoTitular.trim() && (
-                            <p className="text-slate-500">Titular: <span className="text-slate-700">{pagoTitular}</span></p>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
-            </>
-          )}
-
-          {/* Error confirmar */}
-          {errorVenta && (
-            <div className="mt-4 flex items-start gap-2 bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-xs text-red-700">
-              <span className="text-base leading-none mt-0.5">⚠</span>
-              <span className="font-medium">{errorVenta}</span>
-            </div>
-          )}
-
-          {/* Acciones — stack vertical full-width en mobile (mas facil de tappear),
-              fila en sm+. Confirmar en orden visual primero (primary). */}
-          <div className="mt-6 flex flex-col-reverse sm:flex-row gap-3">
-            <button
-              type="button"
-              onClick={() => router.push("/ventas")}
-              className="border border-slate-200 px-6 py-3 rounded-lg text-sm hover:bg-slate-50 transition-colors min-h-[48px] w-full sm:w-auto"
-            >
-              Cancelar
-            </button>
-            <button
-              type="submit"
-              disabled={!ventaValida || guardando}
-              aria-busy={guardando}
-              className="bg-[#0EA5E9] hover:bg-[#0284C7] text-white px-6 py-3 rounded-lg text-sm font-medium transition-colors shadow-sm disabled:opacity-40 disabled:cursor-not-allowed active:scale-95 min-h-[48px] w-full sm:w-auto"
-            >
-              {guardando ? "Guardando…" : "Confirmar venta"}
-            </button>
-          </div>
-
-        </div>
-
-      </form>
-
-      <ProductPickerModal
-        open={pickerOpen}
-        onClose={() => setPickerOpen(false)}
-        onAgregar={handleAgregarDesdePicker}
-        excludeIds={items.map((i) => i.producto_id)}
-        moneda={moneda}
-        tipoCambio={tipoCambioNum}
-        ivaDefault={lineaIva}
-      />
-
-      {/* Modal de cobro (transferencia / tarjeta-débito) */}
-      {cobroModalOpen && (metodoPago === "transferencia" || metodoPago === "tarjeta") && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setCobroModalOpen(false)}>
-          <div className="w-full max-w-sm rounded-xl bg-white p-5 shadow-xl space-y-3" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-slate-800">
-                {metodoPago === "transferencia" ? "Datos de transferencia" : "Datos de tarjeta / débito"}
-              </h3>
-              <button type="button" onClick={() => setCobroModalOpen(false)} className="text-slate-400 hover:text-slate-700 text-lg leading-none">✕</button>
-            </div>
-
-            <div>
-              <label className="block text-xs text-gray-600 mb-1">
-                {metodoPago === "tarjeta" ? "Entidad / banco / POS" : "Entidad / banco"}
-              </label>
-              <input
-                type="text"
-                value={entidadQuery}
-                onChange={(e) => setEntidadQuery(e.target.value)}
-                placeholder="Buscar por código o nombre…"
-                className={inputClass}
-                autoFocus
-              />
-              <div className="mt-1 max-h-40 overflow-auto rounded-lg border border-slate-100">
-                {entidadesFiltradas.length === 0 ? (
-                  <p className="px-3 py-2 text-xs text-gray-400">Sin entidades. Cargalas en Configuración → Entidades bancarias.</p>
-                ) : (
-                  entidadesFiltradas.map((en) => (
-                    <button
-                      key={en.id}
-                      type="button"
-                      onClick={() => { setPagoEntidadId(en.id); setEntidadQuery(""); }}
-                      className={`block w-full text-left px-3 py-1.5 text-sm hover:bg-slate-50 ${pagoEntidadId === en.id ? "bg-sky-50" : ""}`}
-                    >
-                      {en.codigo && <span className="font-mono text-xs text-slate-400 mr-2">{en.codigo}</span>}
-                      {en.nombre}
-                    </button>
-                  ))
-                )}
-              </div>
-              {entidadSel && <p className="mt-1 text-[11px] text-emerald-600">Seleccionada: {entidadSel.nombre}</p>}
-            </div>
-
-            {metodoPago === "transferencia" && (
-              <div>
-                <label className="block text-xs text-gray-600 mb-1">Titular que transfirió</label>
-                <input type="text" value={pagoTitular} onChange={(e) => setPagoTitular(e.target.value)} placeholder="Nombre del titular" className={inputClass} />
-              </div>
-            )}
-
-            <div>
-              <label className="block text-xs text-gray-600 mb-1">N° de comprobante / referencia</label>
-              <input type="text" value={pagoReferencia} onChange={(e) => setPagoReferencia(e.target.value)} placeholder="Comprobante / transacción" className={inputClass} />
-            </div>
-
-            <button type="button" onClick={() => setCobroModalOpen(false)} className="w-full rounded-lg bg-[#0EA5E9] py-2 text-sm font-medium text-white hover:bg-[#0284C7]">
-              Listo
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Modal de confirmación: venta sin stock suficiente */}
-      {confirmSinStockOpen && faltantes.length > 0 && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setConfirmSinStockOpen(false)}>
-          <div className="w-full max-w-lg rounded-xl bg-white p-5 shadow-xl space-y-4" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-start gap-2">
-              <span className="text-amber-500 text-xl leading-none">⚠</span>
-              <div>
-                <h3 className="text-sm font-semibold text-slate-800">Hay productos/insumos sin stock suficiente</h3>
-                <p className="text-xs text-slate-500 mt-0.5">Revisá el detalle. Podés vender igual: el stock quedará negativo y se registrará el movimiento de salida.</p>
-              </div>
-            </div>
-
-            <div className="overflow-x-auto rounded-lg border border-slate-200">
-              <table className="w-full text-left text-sm">
-                <thead>
-                  <tr className="bg-slate-50 text-slate-600 text-xs">
-                    <th className="py-2 px-3 font-medium">Producto / Insumo</th>
-                    <th className="py-2 px-3 font-medium text-right">Stock actual</th>
-                    <th className="py-2 px-3 font-medium text-right">Solicitado</th>
-                    <th className="py-2 px-3 font-medium text-right">Faltante</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {faltantes.map((f) => (
-                    <tr key={f.producto_id} className="border-t border-slate-100">
-                      <td className="py-2 px-3">
-                        <span className="font-medium text-slate-800">{f.nombre}</span>
-                        <span className={`ml-2 rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${f.tipo === "insumo" ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-600"}`}>
-                          {f.tipo === "insumo" ? "Insumo" : "Producto"}
-                        </span>
-                      </td>
-                      <td className="py-2 px-3 text-right tabular-nums">{f.stock_actual}</td>
-                      <td className="py-2 px-3 text-right tabular-nums">{f.solicitado}</td>
-                      <td className="py-2 px-3 text-right tabular-nums font-semibold text-red-600">{f.faltante}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            <div className="flex flex-col-reverse sm:flex-row gap-2 sm:justify-end">
-              <button type="button" onClick={() => setConfirmSinStockOpen(false)} className="rounded-lg border border-slate-200 px-4 py-2 text-sm hover:bg-slate-50">
-                Cancelar
-              </button>
-              <button type="button" disabled={guardando} aria-busy={guardando} onClick={() => void confirmarVentaSinStock()} className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-medium text-white hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed">
-                {guardando ? "Guardando…" : "Confirmar venta de todos modos"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
     </div>
   );
 }
+
+const inputCls = "w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#4FAEB2]";
+const labelCls = "mb-1 block text-xs font-medium text-slate-600";

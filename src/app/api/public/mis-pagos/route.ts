@@ -72,7 +72,7 @@ export async function GET(request: NextRequest) {
   // 2) Traer cuentas por cobrar del cliente
   const { data: cuentasRaw, error: errCu } = await supabase
     .from("cuentas_por_cobrar")
-    .select("id, numero_venta, fecha_emision, fecha_vencimiento, moneda, total, saldo, estado")
+    .select("id, numero_venta, fecha_emision, fecha_vencimiento, moneda, total, saldo, estado, numero_cuota, total_cuotas")
     .eq("empresa_id", empresaId)
     .eq("cliente_id", cliente.id)
     .neq("estado", "anulado")
@@ -83,6 +83,7 @@ export async function GET(request: NextRequest) {
     id: string; numero_venta: string | null; fecha_emision: string | null;
     fecha_vencimiento: string | null; moneda: string; total: number | string;
     saldo: number | string; estado: string;
+    numero_cuota: number | null; total_cuotas: number | null;
   }>;
 
   const hoy = new Date().toISOString().slice(0, 10);
@@ -118,6 +119,8 @@ export async function GET(request: NextRequest) {
     return {
       id: c.id,
       numero: c.numero_venta,
+      numero_cuota: c.numero_cuota,
+      total_cuotas: c.total_cuotas,
       fecha_emision: fmtFecha(c.fecha_emision),
       fecha_vencimiento: venc,
       moneda: c.moneda,
