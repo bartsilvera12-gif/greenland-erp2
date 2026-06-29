@@ -122,7 +122,8 @@ export async function GET(request: NextRequest, ctxP: { params: Promise<{ id: st
   header .doc-meta .tag { display: inline-block; padding: 3px 10px; border-radius: 100px; background: #e7f6ee; color: #0d5e37; font-weight:700; font-size:10.5px; letter-spacing: .08em; text-transform: uppercase; margin-bottom: 6px; }
   header .doc-meta .num { font-family: 'Bricolage Grotesque',sans-serif; font-weight: 800; font-size: 18px; }
   header .doc-meta .date { font-size: 11.5px; color: #7c8a82; margin-top: 2px; }
-  h2 { font-family: 'Bricolage Grotesque',sans-serif; font-weight: 700; font-size: 13px; margin: 18px 0 9px; padding-bottom: 5px; border-bottom: 1px solid #e6ede8; letter-spacing: .03em; text-transform: uppercase; color: #0d5e37; }
+  h2 { font-family: 'Bricolage Grotesque',sans-serif; font-weight: 700; font-size: 13px; margin: 26px 0 12px; padding-top: 14px; padding-bottom: 6px; border-top: 2px solid #1aa056; border-bottom: 1px solid #e6ede8; letter-spacing: .03em; text-transform: uppercase; color: #0d5e37; }
+  h2:first-of-type { margin-top: 8px; }
   .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 18px 28px; }
   .field { font-size: 12px; }
   .field .lbl { font-size: 10px; color: #7c8a82; text-transform: uppercase; letter-spacing: .04em; font-weight: 600; }
