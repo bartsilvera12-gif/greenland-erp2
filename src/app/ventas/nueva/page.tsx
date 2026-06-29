@@ -1,9 +1,7 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Trash2 } from "lucide-react";
 import { fetchWithSupabaseSession } from "@/lib/api/fetch-with-supabase-session";
 
 type Moneda = "GS" | "USD";
@@ -12,7 +10,7 @@ type TipoVenta = "CONTADO" | "CREDITO";
 
 interface Servicio {
   descripcion: string;
-  monto: number | "";
+  monto: number;
 }
 
 interface ClienteOpt {
@@ -23,14 +21,66 @@ interface ClienteOpt {
   documento: string | null;
 }
 
-function fmt(n: number, m: Moneda) {
-  const sym = m === "USD" ? "USD" : "Gs.";
-  return `${sym} ${Math.round(n).toLocaleString("es-PY")}`;
+function ivaRate(t: TipoIva): number {
+  return t === "5%" ? 0.05 : t === "10%" ? 0.10 : 0;
 }
-function num(v: string | number): number {
-  if (typeof v === "number") return v;
+function fmtMonto(v: number, m: Moneda): string {
+  const p = m === "USD" ? "USD" : "Gs.";
+  return `${p} ${Math.round(v).toLocaleString("es-PY")}`;
+}
+function parseMonto(v: string): number {
   const n = Number(String(v).replace(/[^\d.-]/g, ""));
   return Number.isFinite(n) ? n : 0;
+}
+function fmtThousand(v: number | ""): string {
+  if (v === "" || v == null || !Number.isFinite(v)) return "";
+  return Number(v).toLocaleString("es-PY");
+}
+
+const inputClass =
+  "w-full border border-slate-200 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-[#4FAEB2] focus:outline-none bg-white text-sm";
+const labelClass = "block text-sm font-medium text-slate-700 mb-1.5";
+
+function SegmentedControl<T extends string>({
+  value, options, onChange,
+}: { value: T; options: { value: T; label: string }[]; onChange: (v: T) => void }) {
+  return (
+    <div className="flex border border-slate-200 rounded-lg overflow-hidden">
+      {options.map((opt) => (
+        <button
+          key={opt.value}
+          type="button"
+          onClick={() => onChange(opt.value)}
+          className={`flex-1 py-2 text-sm font-medium transition-colors ${
+            value === opt.value ? "bg-[#4FAEB2] text-white" : "bg-white text-slate-600 hover:bg-slate-50"
+          }`}
+        >
+          {opt.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function GroupHeader({ children }: { children: React.ReactNode }) {
+  return <h2 className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">{children}</h2>;
+}
+
+function Total({
+  label, value, moneda, highlight, muted,
+}: { label: string; value: number; moneda: Moneda; highlight?: boolean; muted?: boolean }) {
+  return (
+    <div className={`rounded-lg border px-3 py-2 ${
+      highlight ? "border-[#4FAEB2] bg-[#ECFEFF]"
+      : muted ? "border-slate-100 bg-slate-50"
+      : "border-slate-200 bg-white"
+    }`}>
+      <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">{label}</div>
+      <div className={`mt-1 text-base font-semibold ${highlight ? "text-[#3F8E91]" : "text-slate-800"}`}>
+        {fmtMonto(value, moneda)}
+      </div>
+    </div>
+  );
 }
 
 export default function NuevaVentaPage() {
@@ -38,22 +88,21 @@ export default function NuevaVentaPage() {
 
   const [clientes, setClientes] = useState<ClienteOpt[]>([]);
   const [clienteId, setClienteId] = useState<string>("");
+
   const [razonSocial, setRazonSocial] = useState("");
   const [ruc, setRuc] = useState("");
   const [documento, setDocumento] = useState("");
-
   const [moneda, setMoneda] = useState<Moneda>("GS");
   const [tipoIva, setTipoIva] = useState<TipoIva>("10%");
-  const [servicios, setServicios] = useState<Servicio[]>([{ descripcion: "", monto: "" }]);
+  const [servicios, setServicios] = useState<Servicio[]>([{ descripcion: "", monto: 0 }]);
   const [tipoVenta, setTipoVenta] = useState<TipoVenta>("CONTADO");
   const [cuotasCantidad, setCuotasCantidad] = useState<number>(12);
   const [cuotaMonto, setCuotaMonto] = useState<number | "">("");
   const [fechaPrimeraCuota, setFechaPrimeraCuota] = useState<string>("");
   const [intervaloDias, setIntervaloDias] = useState<number>(30);
   const [observaciones, setObservaciones] = useState("");
-
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
     void (async () => {
@@ -76,29 +125,31 @@ export default function NuevaVentaPage() {
     }
   }
 
-  const total = useMemo(
-    () => servicios.reduce((acc, s) => acc + (num(s.monto) || 0), 0),
-    [servicios],
-  );
+  const { subtotal, montoIva, total } = useMemo(() => {
+    const sub = servicios.reduce((acc, s) => acc + (Number(s.monto) || 0), 0);
+    const iva = sub * ivaRate(tipoIva);
+    return { subtotal: sub, montoIva: iva, total: sub };
+  }, [servicios, tipoIva]);
 
-  function updateServicio(idx: number, patch: Partial<Servicio>) {
-    setServicios((arr) => arr.map((s, i) => (i === idx ? { ...s, ...patch } : s)));
+  function updateServicio(i: number, patch: Partial<Servicio>) {
+    setServicios((arr) => arr.map((s, idx) => (idx === i ? { ...s, ...patch } : s)));
   }
   function addServicio() {
-    setServicios((arr) => [...arr, { descripcion: "", monto: "" }]);
+    setServicios((arr) => [...arr, { descripcion: "", monto: 0 }]);
   }
-  function removeServicio(idx: number) {
-    setServicios((arr) => (arr.length <= 1 ? arr : arr.filter((_, i) => i !== idx)));
+  function removeServicio(i: number) {
+    setServicios((arr) => (arr.length > 1 ? arr.filter((_, idx) => idx !== i) : arr));
   }
 
-  async function save() {
-    setError(null);
-    if (!razonSocial.trim()) { setError("La razón social del cliente es obligatoria"); return; }
+  async function onSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setErr(null);
+    if (!razonSocial.trim()) { setErr("Ingresá la razón social del cliente."); return; }
     const valid = servicios
-      .map((s) => ({ descripcion: s.descripcion.trim(), monto: num(s.monto) }))
+      .map((s) => ({ descripcion: s.descripcion.trim(), monto: Number(s.monto) || 0 }))
       .filter((s) => s.descripcion && s.monto > 0);
-    if (!valid.length) { setError("Cargá al menos una línea con descripción y monto"); return; }
-    if (tipoVenta === "CREDITO" && cuotasCantidad < 1) { setError("Cantidad de cuotas inválida"); return; }
+    if (!valid.length) { setErr("Cargá al menos una línea con descripción y monto > 0."); return; }
+    if (tipoVenta === "CREDITO" && cuotasCantidad < 1) { setErr("Cantidad de cuotas inválida"); return; }
 
     setSaving(true);
     try {
@@ -107,238 +158,291 @@ export default function NuevaVentaPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           cliente_id: clienteId || null,
-          cliente_razon_social: razonSocial,
-          cliente_ruc: ruc || null,
-          cliente_documento: documento || null,
+          cliente_razon_social: razonSocial.trim(),
+          cliente_ruc: ruc.trim() || null,
+          cliente_documento: documento.trim() || null,
           moneda,
           tipo_iva: tipoIva,
           servicios: valid,
           tipo_venta: tipoVenta,
           cuotas_cantidad: tipoVenta === "CREDITO" ? cuotasCantidad : undefined,
-          cuota_monto: tipoVenta === "CREDITO" && cuotaMonto ? num(cuotaMonto) : undefined,
+          cuota_monto: tipoVenta === "CREDITO" && cuotaMonto ? Number(cuotaMonto) : undefined,
           fecha_primera_cuota: tipoVenta === "CREDITO" ? fechaPrimeraCuota || undefined : undefined,
           intervalo_dias: tipoVenta === "CREDITO" ? intervaloDias : undefined,
-          observaciones: observaciones || null,
+          observaciones: observaciones.trim() || null,
         }),
       });
       const json = await res.json();
       if (!res.ok || !json?.success) {
-        setError(json?.error ?? "No se pudo crear la venta");
+        setErr(json?.error ?? "No se pudo crear la venta");
         setSaving(false);
         return;
       }
       router.push("/ventas");
+      router.refresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Error de red");
+      setErr(e instanceof Error ? e.message : "Error al guardar");
       setSaving(false);
     }
   }
 
   return (
-    <div className="space-y-6 px-4 py-4 md:px-6 md:py-6 max-w-4xl">
-      <header>
-        <Link href="/ventas" className="text-xs text-slate-500 hover:text-slate-800">← Volver al listado</Link>
-        <h1 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">Nueva venta</h1>
-        <p className="mt-1 text-sm text-slate-500">Cargá las líneas de servicio o cuotas y guardalas.</p>
+    <div className="px-6 py-6">
+      <header className="mb-6">
+        <button
+          type="button"
+          onClick={() => router.push("/ventas")}
+          className="mb-2 inline-flex text-xs font-medium text-slate-500 hover:text-[#3F8E91]"
+        >
+          ← Volver a ventas
+        </button>
+        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Nueva venta</h1>
+        <p className="mt-1 text-sm text-slate-500">
+          Cargá la razón social, los servicios y el IVA aplicable.
+        </p>
       </header>
 
-      <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm space-y-4">
-        <h2 className="text-sm font-semibold text-slate-800">Cliente</h2>
-        <div className="grid gap-4 md:grid-cols-2">
-          <div className="md:col-span-2">
-            <label className={labelCls}>Buscar cliente existente</label>
-            <select
-              className={inputCls}
-              value={clienteId}
-              onChange={(e) => onClienteSelected(e.target.value)}
-            >
-              <option value="">— Cliente nuevo (cargar manual) —</option>
-              {clientes.map((c) => {
-                const n = (c.empresa ?? c.nombre_contacto ?? "Cliente").trim();
-                const doc = c.ruc || c.documento || "";
-                return (
-                  <option key={c.id} value={c.id}>{n}{doc ? ` · ${doc}` : ""}</option>
-                );
-              })}
-            </select>
-          </div>
-          <div className="md:col-span-2">
-            <label className={labelCls}>Razón social *</label>
-            <input className={inputCls} value={razonSocial} onChange={(e) => setRazonSocial(e.target.value)} />
-          </div>
-          <div>
-            <label className={labelCls}>RUC</label>
-            <input className={inputCls} value={ruc} onChange={(e) => setRuc(e.target.value)} />
-          </div>
-          <div>
-            <label className={labelCls}>CI / Documento</label>
-            <input className={inputCls} value={documento} onChange={(e) => setDocumento(e.target.value)} />
-          </div>
-        </div>
-      </section>
+      <form onSubmit={onSubmit} className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm space-y-6">
+        {err ? (
+          <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{err}</div>
+        ) : null}
 
-      <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm space-y-4">
-        <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-slate-800">Descripción de líneas</h2>
-          <button type="button" onClick={addServicio} className="inline-flex items-center gap-1 rounded-md bg-slate-100 px-2.5 py-1 text-xs text-slate-700 hover:bg-slate-200">
-            <Plus className="h-3 w-3" /> Agregar línea
-          </button>
+        <div>
+          <GroupHeader>Moneda</GroupHeader>
+          <div className="mt-2">
+            <SegmentedControl<Moneda>
+              value={moneda}
+              onChange={setMoneda}
+              options={[
+                { value: "GS", label: "Guaraníes" },
+                { value: "USD", label: "Dólares" },
+              ]}
+            />
+          </div>
         </div>
-        <div className="space-y-2">
-          {servicios.map((s, i) => (
-            <div key={i} className="grid grid-cols-12 gap-2 items-start">
-              <div className="col-span-7">
-                <input
-                  className={inputCls}
-                  placeholder="Ej. Cuota Mz. A · Lote 12"
-                  value={s.descripcion}
-                  onChange={(e) => updateServicio(i, { descripcion: e.target.value })}
-                />
-              </div>
-              <div className="col-span-4">
-                <input
-                  className={inputCls}
-                  inputMode="numeric"
-                  placeholder="Monto"
-                  value={s.monto === "" ? "" : Number(s.monto).toLocaleString("es-PY")}
-                  onChange={(e) => updateServicio(i, { monto: num(e.target.value) })}
-                />
-              </div>
-              <div className="col-span-1 flex justify-end">
+
+        <div>
+          <GroupHeader>Tipo de IVA</GroupHeader>
+          <p className="mt-1 text-[11px] text-slate-400">El IVA está incluido en el monto cargado.</p>
+          <div className="mt-2">
+            <SegmentedControl<TipoIva>
+              value={tipoIva}
+              onChange={setTipoIva}
+              options={[
+                { value: "EXENTA", label: "Exenta" },
+                { value: "5%", label: "5%" },
+                { value: "10%", label: "10%" },
+              ]}
+            />
+          </div>
+        </div>
+
+        <div className="h-px bg-slate-100" />
+
+        {/* Cliente — selector + campos */}
+        <div>
+          <label className={labelClass}>Buscar cliente existente</label>
+          <select className={inputClass} value={clienteId} onChange={(e) => onClienteSelected(e.target.value)}>
+            <option value="">— Cliente nuevo (cargar manual) —</option>
+            {clientes.map((c) => {
+              const n = (c.empresa ?? c.nombre_contacto ?? "Cliente").trim();
+              const doc = c.ruc || c.documento || "";
+              return <option key={c.id} value={c.id}>{n}{doc ? ` · ${doc}` : ""}</option>;
+            })}
+          </select>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div>
+            <label className={labelClass}>Razón social *</label>
+            <input
+              className={inputClass}
+              value={razonSocial}
+              onChange={(e) => setRazonSocial(e.target.value)}
+              placeholder="Ej: Constructora Aurora S.A."
+              required
+            />
+          </div>
+          <div>
+            <label className={labelClass}>Nº de RUC</label>
+            <input
+              className={inputClass}
+              value={ruc}
+              onChange={(e) => setRuc(e.target.value)}
+              placeholder="Ej: 80012345-6"
+            />
+          </div>
+          <div className="sm:col-span-2">
+            <label className={labelClass}>CI / Documento</label>
+            <input
+              className={inputClass}
+              value={documento}
+              onChange={(e) => setDocumento(e.target.value)}
+              placeholder="Ej: 1234567"
+            />
+          </div>
+        </div>
+
+        <div className="h-px bg-slate-100" />
+
+        <div>
+          <div className="mb-3 flex items-end justify-between gap-3">
+            <GroupHeader>Descripción de servicios</GroupHeader>
+            <button
+              type="button"
+              onClick={addServicio}
+              className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
+            >
+              + Agregar línea
+            </button>
+          </div>
+          <div className="space-y-3">
+            {servicios.map((s, i) => (
+              <div key={i} className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_200px_auto] sm:items-end">
+                <div>
+                  <label className={labelClass}>Descripción</label>
+                  <input
+                    className={inputClass}
+                    value={s.descripcion}
+                    onChange={(e) => updateServicio(i, { descripcion: e.target.value })}
+                    placeholder="Ej: Valor de la casa / Escribanía / Gastos varios"
+                  />
+                </div>
+                <div>
+                  <label className={labelClass}>Monto</label>
+                  <input
+                    className={inputClass}
+                    inputMode="numeric"
+                    value={s.monto > 0 ? Number(s.monto).toLocaleString("es-PY") : ""}
+                    onChange={(e) => updateServicio(i, { monto: parseMonto(e.target.value) })}
+                    placeholder="0"
+                  />
+                </div>
                 <button
                   type="button"
                   onClick={() => removeServicio(i)}
                   disabled={servicios.length <= 1}
-                  className="rounded-md p-1.5 text-red-600 hover:bg-red-50 disabled:opacity-30"
+                  className="h-[38px] rounded-lg border border-rose-200 bg-white px-3 text-xs font-medium text-rose-600 hover:bg-rose-50 disabled:opacity-40 disabled:cursor-not-allowed sm:self-end"
                   title="Quitar línea"
                 >
-                  <Trash2 className="h-4 w-4" />
+                  Quitar
                 </button>
               </div>
-            </div>
-          ))}
-        </div>
-        <div className="flex items-center justify-between border-t border-slate-100 pt-3">
-          <span className="text-xs uppercase tracking-wider text-slate-500">Total</span>
-          <span className="text-xl font-bold tabular-nums text-slate-900">{fmt(total, moneda)}</span>
-        </div>
-      </section>
-
-      <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h2 className="mb-3 text-sm font-semibold text-slate-800">Moneda e IVA</h2>
-        <div className="grid gap-4 md:grid-cols-3">
-          <div>
-            <label className={labelCls}>Moneda</label>
-            <select className={inputCls} value={moneda} onChange={(e) => setMoneda(e.target.value as Moneda)}>
-              <option value="GS">Guaraníes (GS)</option>
-              <option value="USD">Dólares (USD)</option>
-            </select>
-          </div>
-          <div>
-            <label className={labelCls}>Tipo de IVA</label>
-            <select className={inputCls} value={tipoIva} onChange={(e) => setTipoIva(e.target.value as TipoIva)}>
-              <option value="EXENTA">Exenta</option>
-              <option value="5%">IVA 5%</option>
-              <option value="10%">IVA 10%</option>
-            </select>
+            ))}
           </div>
         </div>
-      </section>
 
-      <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm space-y-4">
-        <h2 className="text-sm font-semibold text-slate-800">Tipo de venta</h2>
-        <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1">
-          {(["CONTADO", "CREDITO"] as TipoVenta[]).map((t) => (
-            <button
-              key={t}
-              type="button"
-              onClick={() => setTipoVenta(t)}
-              className={`rounded-md px-4 py-1.5 text-sm font-medium ${
-                tipoVenta === t ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:text-slate-800"
-              }`}
-            >
-              {t === "CONTADO" ? "Contado" : "Crédito"}
-            </button>
-          ))}
+        <div className="h-px bg-slate-100" />
+
+        <div>
+          <GroupHeader>Totales</GroupHeader>
+          <p className="mt-1 text-[11px] text-slate-400">
+            El total es igual al monto cargado — el IVA mostrado es informativo y ya está incluido.
+          </p>
+          <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <Total label="Subtotal (con IVA)" value={subtotal} moneda={moneda} />
+            <Total
+              label={tipoIva === "EXENTA" ? "IVA (no aplica)" : `IVA ${tipoIva} incluido`}
+              value={montoIva}
+              moneda={moneda}
+              muted={tipoIva === "EXENTA"}
+            />
+            <Total label="Total a cobrar" value={total} moneda={moneda} highlight />
+          </div>
         </div>
 
-        {tipoVenta === "CREDITO" && (
-          <div className="grid gap-4 md:grid-cols-4 rounded-lg bg-slate-50 p-4">
-            <div>
-              <label className={labelCls}>Cantidad de cuotas</label>
-              <input
-                type="number"
-                min={1}
-                max={120}
-                className={inputCls}
-                value={cuotasCantidad}
-                onChange={(e) => setCuotasCantidad(Math.max(1, Number(e.target.value) || 1))}
-              />
-            </div>
-            <div>
-              <label className={labelCls}>Monto por cuota</label>
-              <input
-                className={inputCls}
-                inputMode="numeric"
-                placeholder={cuotasCantidad > 0 ? Math.round(total / cuotasCantidad).toLocaleString("es-PY") : ""}
-                value={cuotaMonto === "" ? "" : Number(cuotaMonto).toLocaleString("es-PY")}
-                onChange={(e) => setCuotaMonto(num(e.target.value) || "")}
-              />
-              <p className="mt-1 text-[10px] text-slate-400">Vacío = se reparte el total automáticamente</p>
-            </div>
-            <div>
-              <label className={labelCls}>Primera cuota vence</label>
-              <input
-                type="date"
-                className={inputCls}
-                value={fechaPrimeraCuota}
-                onChange={(e) => setFechaPrimeraCuota(e.target.value)}
-              />
-            </div>
-            <div>
-              <label className={labelCls}>Cada (días)</label>
-              <input
-                type="number"
-                min={1}
-                className={inputCls}
-                value={intervaloDias}
-                onChange={(e) => setIntervaloDias(Math.max(1, Number(e.target.value) || 30))}
-              />
-            </div>
+        <div className="h-px bg-slate-100" />
+
+        {/* Tipo de venta + cuotas (extensión Green Land) */}
+        <div>
+          <GroupHeader>Tipo de venta</GroupHeader>
+          <div className="mt-2 max-w-md">
+            <SegmentedControl<TipoVenta>
+              value={tipoVenta}
+              onChange={setTipoVenta}
+              options={[
+                { value: "CONTADO", label: "Contado" },
+                { value: "CREDITO", label: "Crédito (cuotas)" },
+              ]}
+            />
           </div>
-        )}
-      </section>
+          {tipoVenta === "CREDITO" && (
+            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-4 rounded-lg bg-slate-50 p-4">
+              <div>
+                <label className={labelClass}>Cantidad de cuotas</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={120}
+                  className={inputClass}
+                  value={cuotasCantidad}
+                  onChange={(e) => setCuotasCantidad(Math.max(1, Number(e.target.value) || 1))}
+                />
+              </div>
+              <div>
+                <label className={labelClass}>Monto por cuota</label>
+                <input
+                  className={inputClass}
+                  inputMode="numeric"
+                  placeholder={cuotasCantidad > 0 ? Math.round(total / cuotasCantidad).toLocaleString("es-PY") : ""}
+                  value={fmtThousand(cuotaMonto)}
+                  onChange={(e) => {
+                    const v = parseMonto(e.target.value);
+                    setCuotaMonto(v > 0 ? v : "");
+                  }}
+                />
+                <p className="mt-1 text-[10px] text-slate-400">Vacío = se reparte el total automáticamente</p>
+              </div>
+              <div>
+                <label className={labelClass}>Primera cuota vence</label>
+                <input
+                  type="date"
+                  className={inputClass}
+                  value={fechaPrimeraCuota}
+                  onChange={(e) => setFechaPrimeraCuota(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className={labelClass}>Cada (días)</label>
+                <input
+                  type="number"
+                  min={1}
+                  className={inputClass}
+                  value={intervaloDias}
+                  onChange={(e) => setIntervaloDias(Math.max(1, Number(e.target.value) || 30))}
+                />
+              </div>
+            </div>
+          )}
+        </div>
 
-      <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h2 className="mb-3 text-sm font-semibold text-slate-800">Observaciones</h2>
-        <textarea
-          rows={3}
-          className={inputCls}
-          value={observaciones}
-          onChange={(e) => setObservaciones(e.target.value)}
-        />
-      </section>
+        <div>
+          <label className={labelClass}>Observaciones</label>
+          <textarea
+            className={`${inputClass} min-h-[80px]`}
+            value={observaciones}
+            onChange={(e) => setObservaciones(e.target.value)}
+            placeholder="Notas internas (opcional)"
+          />
+        </div>
 
-      {error && (
-        <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div>
-      )}
-
-      <div className="flex justify-end gap-2">
-        <Link href="/ventas" className="rounded-md border border-slate-200 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">
-          Cancelar
-        </Link>
-        <button
-          type="button"
-          onClick={save}
-          disabled={saving}
-          className="inline-flex items-center gap-1.5 rounded-xl bg-[#4FAEB2] px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-[#3F8E91] disabled:opacity-50"
-        >
-          {saving ? "Guardando…" : "Crear venta"}
-        </button>
-      </div>
+        <div className="flex items-center gap-3 pt-2">
+          <button
+            type="submit"
+            disabled={saving}
+            className="inline-flex items-center rounded-xl bg-[#4FAEB2] px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-[#3F8E91] disabled:opacity-60"
+          >
+            {saving ? "Guardando…" : "Guardar venta"}
+          </button>
+          <button
+            type="button"
+            onClick={() => router.push("/ventas")}
+            className="inline-flex items-center rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          >
+            Cancelar
+          </button>
+        </div>
+      </form>
     </div>
   );
 }
-
-const inputCls = "w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#4FAEB2]";
-const labelCls = "mb-1 block text-xs font-medium text-slate-600";
