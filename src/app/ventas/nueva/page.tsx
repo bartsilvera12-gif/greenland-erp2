@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { fetchWithSupabaseSession } from "@/lib/api/fetch-with-supabase-session";
+import SearchableSelect, { type SearchableOption } from "@/components/ui/SearchableSelect";
 
 type Moneda = "GS" | "USD";
 type TipoIva = "EXENTA" | "5%" | "10%";
@@ -290,30 +291,41 @@ export default function NuevaVentaPage() {
 
         <div className="h-px bg-slate-100" />
 
-        {/* Cliente — selector + campos */}
+        {/* Cliente — selector con buscador */}
         <div>
           <label className={labelClass}>Buscar cliente existente</label>
-          <select className={inputClass} value={clienteId} onChange={(e) => onClienteSelected(e.target.value)}>
-            <option value="">— Cliente nuevo (cargar manual) —</option>
-            {clientes.map((c) => {
-              const n = (c.empresa ?? c.nombre_contacto ?? "Cliente").trim();
-              const doc = c.ruc || c.documento || "";
-              return <option key={c.id} value={c.id}>{n}{doc ? ` · ${doc}` : ""}</option>;
-            })}
-          </select>
+          <SearchableSelect
+            value={clienteId}
+            onChange={onClienteSelected}
+            options={[
+              { id: "", label: "— Cliente nuevo (cargar manual) —" },
+              ...clientes.map((c): SearchableOption => {
+                const n = (c.empresa ?? c.nombre_contacto ?? "Cliente").trim();
+                const doc = c.ruc || c.documento || "";
+                return { id: c.id, label: n, sublabel: doc || undefined };
+              }),
+            ]}
+            placeholder="Cliente nuevo (cargar manual)"
+            emptyText="Sin clientes que coincidan"
+          />
         </div>
 
-        {/* Propiedad — opcional, autocompleta servicio/cuotas/moneda */}
+        {/* Propiedad — opcional, con buscador */}
         <div>
           <label className={labelClass}>Propiedad vendida (opcional)</label>
-          <select className={inputClass} value={propiedadId} onChange={(e) => onPropiedadSelected(e.target.value)}>
-            <option value="">— No vincular a una propiedad —</option>
-            {propiedades.map((p) => {
-              const precio = p.precio ? ` · Gs. ${Math.round(p.precio).toLocaleString("es-PY")}` : "";
-              const ciudad = p.ciudad ? ` · ${p.ciudad}` : "";
-              return <option key={p.id} value={p.id}>{p.titulo}{ciudad}{precio}</option>;
-            })}
-          </select>
+          <SearchableSelect
+            value={propiedadId}
+            onChange={onPropiedadSelected}
+            options={[
+              { id: "", label: "— No vincular a una propiedad —" },
+              ...propiedades.map((p): SearchableOption => {
+                const partes = [p.ciudad, p.precio ? `Gs. ${Math.round(p.precio).toLocaleString("es-PY")}` : null].filter(Boolean) as string[];
+                return { id: p.id, label: p.titulo, sublabel: partes.join(" · ") || undefined };
+              }),
+            ]}
+            placeholder="No vincular a una propiedad"
+            emptyText="Sin propiedades que coincidan"
+          />
           {propiedadId ? (
             <p className="mt-1 text-[11px] text-emerald-700">Se autocompletó descripción, monto, modalidad y cuotas desde la propiedad.</p>
           ) : (
