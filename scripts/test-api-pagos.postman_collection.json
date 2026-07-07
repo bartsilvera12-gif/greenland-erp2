@@ -1,52 +1,49 @@
 {
   "info": {
     "name": "Green Land · Web Service Cobranzas Bancard",
-    "description": "Los 3 metodos del web service para Bancard / Infonet Cobranzas.\n\nTodos los endpoints requieren X-Api-Key + X-Partner-Id.\n\nSetup:\n1. Editá las variables del collection (Variables tab): base_url, api_key, documento, numero_venta.\n2. El transaccion_id se genera con {{$timestamp}} para evitar choques entre corridas.",
+    "description": "Los 3 metodos del web service para Bancard / Infonet Cobranzas segun la especificacion 'API para Facturadores - Servicio de Cobranzas'.\n\nFormato de respuesta: { status, tid, messages, ... }.\n\nSetup:\n1. Editar variables del collection: base_url, sub_id, inv_id.\n2. El tid se genera con {{$timestamp}} para evitar choques entre corridas.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
     { "key": "base_url", "value": "https://greenland.neura.com.py", "type": "string" },
-    { "key": "api_key", "value": "CAMBIA_ESTO_POR_TU_KEY", "type": "string" },
-    { "key": "partner_id", "value": "bancard", "type": "string" },
-    { "key": "tipo_documento", "value": "ci", "type": "string" },
-    { "key": "documento", "value": "1111111", "type": "string" },
-    { "key": "numero_venta", "value": "BNC-TEST-001", "type": "string" },
-    { "key": "monto", "value": "1500000", "type": "string" },
-    { "key": "tx_id", "value": "TEST-{{$timestamp}}", "type": "string" }
+    { "key": "prd_id", "value": "1", "type": "string" },
+    { "key": "sub_id", "value": "1234567", "type": "string" },
+    { "key": "inv_id", "value": "BNC-TEST-JUAN-C2", "type": "string" },
+    { "key": "amt", "value": "1500000", "type": "string" },
+    { "key": "tid", "value": "{{$timestamp}}", "type": "string" }
   ],
   "item": [
     {
-      "name": "1. Consulta de deudas",
+      "name": "1. Obtener Facturas (GET /deudas/consultar)",
       "request": {
-        "method": "POST",
+        "method": "GET",
         "header": [
-          { "key": "X-Api-Key", "value": "{{api_key}}" },
-          { "key": "X-Partner-Id", "value": "{{partner_id}}" },
-          { "key": "Content-Type", "value": "application/json" }
+          { "key": "Accept", "value": "application/json" }
         ],
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"tipo_documento\": \"{{tipo_documento}}\",\n  \"documento\": \"{{documento}}\"\n}"
-        },
         "url": {
-          "raw": "{{base_url}}/api/bancard/deudas/consultar",
+          "raw": "{{base_url}}/api/bancard/deudas/consultar?tid={{tid}}&sub_id[]={{sub_id}}&prd_id={{prd_id}}",
           "host": ["{{base_url}}"],
-          "path": ["api", "bancard", "deudas", "consultar"]
-        }
+          "path": ["api", "bancard", "deudas", "consultar"],
+          "query": [
+            { "key": "tid", "value": "{{tid}}" },
+            { "key": "sub_id[]", "value": "{{sub_id}}" },
+            { "key": "prd_id", "value": "{{prd_id}}" }
+          ]
+        },
+        "description": "Devuelve la coleccion invoices con las cuotas pendientes del abonado. Si no tiene, devuelve messages[SubscriberWithoutDebt]."
       }
     },
     {
-      "name": "2. Aplicar pago",
+      "name": "2. Realizar un pago (POST /pagos)",
       "request": {
         "method": "POST",
         "header": [
-          { "key": "X-Api-Key", "value": "{{api_key}}" },
-          { "key": "X-Partner-Id", "value": "{{partner_id}}" },
-          { "key": "Content-Type", "value": "application/json" }
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Accept", "value": "application/json" }
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"transaccion_id\": \"{{tx_id}}\",\n  \"numero_venta\":   \"{{numero_venta}}\",\n  \"monto\":          {{monto}},\n  \"moneda\":         \"GS\",\n  \"metodo\":         \"transferencia\",\n  \"referencia\":     \"Pago boca Infonet\"\n}"
+          "raw": "{\n  \"tid\":     {{tid}},\n  \"prd_id\":  {{prd_id}},\n  \"sub_id\":  [\"{{sub_id}}\"],\n  \"inv_id\":  [\"{{inv_id}}\"],\n  \"amt\":     {{amt}},\n  \"curr\":    \"PYG\",\n  \"trn_dat\": \"20260629\",\n  \"trn_hou\": \"153000\",\n  \"cm_amt\":  0,\n  \"cm_curr\": \"PYG\",\n  \"addl\":    { \"payment_method\": \"CASH\" }\n}"
         },
         "url": {
           "raw": "{{base_url}}/api/bancard/pagos",
@@ -60,34 +57,32 @@
       "request": {
         "method": "POST",
         "header": [
-          { "key": "X-Api-Key", "value": "{{api_key}}" },
-          { "key": "X-Partner-Id", "value": "{{partner_id}}" },
-          { "key": "Content-Type", "value": "application/json" }
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Accept", "value": "application/json" }
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"transaccion_id\": \"{{tx_id}}\",\n  \"numero_venta\":   \"{{numero_venta}}\",\n  \"monto\":          {{monto}}\n}"
+          "raw": "{\n  \"tid\":     {{tid}},\n  \"prd_id\":  {{prd_id}},\n  \"sub_id\":  [\"{{sub_id}}\"],\n  \"inv_id\":  [\"{{inv_id}}\"],\n  \"amt\":     {{amt}},\n  \"curr\":    \"PYG\",\n  \"trn_dat\": \"20260629\",\n  \"trn_hou\": \"153000\",\n  \"cm_amt\":  0,\n  \"cm_curr\": \"PYG\",\n  \"addl\":    { \"payment_method\": \"CASH\" }\n}"
         },
         "url": {
           "raw": "{{base_url}}/api/bancard/pagos",
           "host": ["{{base_url}}"],
           "path": ["api", "bancard", "pagos"]
         },
-        "description": "Debe devolver `ya_aplicado: true` con los mismos datos. Sin duplicar el cobro."
+        "description": "Debe devolver PaymentProcessed con la aclaracion 'idempotente' en dsc."
       }
     },
     {
-      "name": "3. Reversar pago",
+      "name": "3. Reversar Transaccion (POST /pagos/reversa)",
       "request": {
         "method": "POST",
         "header": [
-          { "key": "X-Api-Key", "value": "{{api_key}}" },
-          { "key": "X-Partner-Id", "value": "{{partner_id}}" },
-          { "key": "Content-Type", "value": "application/json" }
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Accept", "value": "application/json" }
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"transaccion_id\": \"{{tx_id}}\"\n}"
+          "raw": "{ \"tid\": {{tid}} }"
         },
         "url": {
           "raw": "{{base_url}}/api/bancard/pagos/reversa",
@@ -97,22 +92,20 @@
       }
     },
     {
-      "name": "4. Consulta post-reversa (debe volver a estar pendiente)",
+      "name": "4. Consulta post-reversa (debe volver a aparecer)",
       "request": {
-        "method": "POST",
+        "method": "GET",
         "header": [
-          { "key": "X-Api-Key", "value": "{{api_key}}" },
-          { "key": "X-Partner-Id", "value": "{{partner_id}}" },
-          { "key": "Content-Type", "value": "application/json" }
+          { "key": "Accept", "value": "application/json" }
         ],
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"tipo_documento\": \"{{tipo_documento}}\",\n  \"documento\": \"{{documento}}\"\n}"
-        },
         "url": {
-          "raw": "{{base_url}}/api/bancard/deudas/consultar",
+          "raw": "{{base_url}}/api/bancard/deudas/consultar?tid={{tid}}&sub_id[]={{sub_id}}",
           "host": ["{{base_url}}"],
-          "path": ["api", "bancard", "deudas", "consultar"]
+          "path": ["api", "bancard", "deudas", "consultar"],
+          "query": [
+            { "key": "tid", "value": "{{tid}}" },
+            { "key": "sub_id[]", "value": "{{sub_id}}" }
+          ]
         }
       }
     }

@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
-import { corsJson, corsPreflight, getPublicSupabase, resolvePublicEmpresaId } from "@/lib/public-api/cors";
-import { requireApiKey, clientIp } from "@/lib/public-api/api-key";
+import { corsPreflight, getPublicSupabase, resolvePublicEmpresaId } from "@/lib/public-api/cors";
 import { registrarCobro } from "@/lib/cobros/server/cobros-pg";
+import { bancardJson, parseTid, parseTrnDat, asStringList, type BancardMessage } from "@/lib/bancard/format";
 
 export const dynamic = "force-dynamic";
 
@@ -10,169 +10,177 @@ export async function OPTIONS() { return corsPreflight(); }
 /**
  * POST /api/bancard/pagos
  *
- * Aplica un pago de Bancard / Infonet Cobranzas (u otro partner externo)
- * contra una cuota. Idempotente por `transaccion_id` del partner.
+ * Cumple con la spec Bancard "Realizar un pago".
+ * Idempotente por `tid` (identificador de la transacción del partner).
  *
- * Headers:
- *   X-Api-Key:     <EXTERNAL_PAYMENT_API_KEY>
- *   X-Partner-Id:  bancard
- *   Content-Type:  application/json
- *
- * Body JSON:
+ * Body JSON (según PDF):
  *   {
- *     "transaccion_id": "EXT-12345",          // requerido, idempotency key
- *     "numero_venta":   "VTA-20260629-001-C5", // requerido, numero de la cuota
- *     "monto":          1500000,               // requerido, > 0
- *     "moneda":         "GS",                  // opcional, default GS
- *     "fecha_pago":     "2026-06-29T15:30:00Z",// opcional, default now
- *     "metodo":         "transferencia",       // opcional: efectivo|transferencia|tarjeta|otro
- *     "referencia":     "Lote A · Cuota 5"     // opcional
+ *     "tid":     3950,
+ *     "prd_id":  1,
+ *     "sub_id":  ["1234567"],
+ *     "inv_id":  ["BNC-TEST-JUAN-C2"],
+ *     "amt":     1500000,
+ *     "curr":    "PYG",
+ *     "trn_dat": "20260629",
+ *     "trn_hou": "153000",
+ *     "cm_amt":  0,
+ *     "cm_curr": "PYG",
+ *     "addl":    { ... }
  *   }
- *
- * Respuestas:
- *   200 success → { transaccion_id, cuenta_id, cobro_id, saldo_restante, estado_cuenta, applied_at }
- *   200 success ya aplicado (idempotente) → mismo shape con flag `ya_aplicado: true`
- *   400 → falta dato / monto inválido / cuenta anulada/pagada
- *   401 → API key inválida
- *   404 → cuota no encontrada
- *   409 → mismo transaccion_id ya existe pero contra otra cuenta/monto
  */
 export async function POST(request: NextRequest) {
-  const auth = requireApiKey(request);
-  if (auth instanceof Response) return auth;
-
   let body: Record<string, unknown> | null = null;
-  try {
-    body = (await request.json()) as Record<string, unknown>;
-  } catch {
-    return corsJson({ success: false, error: "JSON inválido" }, { status: 400 });
+  try { body = (await request.json()) as Record<string, unknown>; }
+  catch { return bancardJson(0, "error", [msg("error", "InvalidParameters", "JSON inválido")], undefined, 422); }
+  if (!body) return bancardJson(0, "error", [msg("error", "InvalidParameters", "Body vacío")], undefined, 422);
+
+  const tid = parseTid(body.tid);
+  if (tid === null) {
+    return bancardJson(0, "error", [msg("error", "MissingParameter", "tid requerido")], undefined, 403);
   }
-  if (!body) return corsJson({ success: false, error: "Body vacío" }, { status: 400 });
 
-  const transaccionId = typeof body.transaccion_id === "string" ? body.transaccion_id.trim().slice(0, 80) : "";
-  const numeroVenta = typeof body.numero_venta === "string" ? body.numero_venta.trim().slice(0, 120) : "";
-  const monto = Number(body.monto);
-  const moneda = typeof body.moneda === "string" && body.moneda.toUpperCase() === "USD" ? "USD" : "GS";
-  const fechaPago = typeof body.fecha_pago === "string" ? body.fecha_pago : new Date().toISOString();
-  const metodo = typeof body.metodo === "string" ? body.metodo : "transferencia";
-  const referencia = typeof body.referencia === "string" ? body.referencia.slice(0, 200) : null;
+  const subIds = asStringList(body.sub_id);
+  const invIds = asStringList(body.inv_id);
+  const amt = Number(body.amt);
+  const curr = typeof body.curr === "string" && body.curr.toUpperCase() === "USD" ? "USD" : "PYG";
 
-  if (!transaccionId) return corsJson({ success: false, error: "transaccion_id requerido" }, { status: 400 });
-  if (!numeroVenta) return corsJson({ success: false, error: "numero_venta requerido" }, { status: 400 });
-  if (!Number.isFinite(monto) || monto <= 0) return corsJson({ success: false, error: "monto inválido" }, { status: 400 });
+  if (subIds.length === 0) return bancardJson(tid, "error", [msg("error", "MissingParameter", "sub_id requerido")], undefined, 403);
+  if (invIds.length === 0) return bancardJson(tid, "error", [msg("error", "MissingParameter", "inv_id requerido")], undefined, 403);
+  if (!Number.isFinite(amt) || amt <= 0) {
+    return bancardJson(tid, "error", [msg("error", "InvalidParameters", "amt inválido")], undefined, 422);
+  }
+
+  const documento = subIds[0]!;
+  const numeroVenta = invIds[0]!;
+
+  const trnDatISO = parseTrnDat(body.trn_dat) ?? new Date().toISOString().slice(0, 10);
+  const trnHou = typeof body.trn_hou === "string" ? body.trn_hou.padStart(6, "0") : "000000";
+  const appliedAtIso = `${trnDatISO}T${trnHou.slice(0, 2)}:${trnHou.slice(2, 4)}:${trnHou.slice(4, 6)}Z`;
 
   const supabase = getPublicSupabase();
   const empresaId = await resolvePublicEmpresaId(supabase);
-  if (!empresaId) return corsJson({ success: false, error: "empresa no resuelta" }, { status: 500 });
+  if (!empresaId) {
+    return bancardJson(tid, "error", [msg("error", "HostTransactionError", "empresa no resuelta")], undefined, 403);
+  }
 
-  // 1) Idempotencia: si ya existe un pago aplicado con ese transaccion_id, devolverlo.
+  // Partner_id fijo para el nuevo formato Bancard. Idempotencia por (partner_id, tid).
+  const partnerId = "bancard";
+  const tidStr = String(tid);
+
+  // ── 1) Idempotencia: si ya existe un pago aplicado con ese tid, devolver éxito ──
   const { data: dup } = await supabase
     .from("pagos_externos")
     .select("id, cuenta_id, cobro_id, monto, numero_venta, estado, applied_at")
     .eq("empresa_id", empresaId)
-    .eq("partner_id", auth.partner_id)
-    .eq("transaccion_id", transaccionId)
+    .eq("partner_id", partnerId)
+    .eq("transaccion_id", tidStr)
     .maybeSingle();
 
   if (dup) {
     const d = dup as { id: string; cuenta_id: string; cobro_id: string | null; monto: number | string; numero_venta: string | null; estado: string; applied_at: string };
-    // Si vino con datos distintos a los originales, es ambiguo → 409.
-    if (Number(d.monto) !== monto || (d.numero_venta && d.numero_venta !== numeroVenta)) {
-      return corsJson(
-        { success: false, error: "transaccion_id ya existe con otros datos", existente: { numero_venta: d.numero_venta, monto: d.monto } },
-        { status: 409 },
-      );
-    }
     if (d.estado === "reversado") {
-      return corsJson({ success: false, error: "transacción reversada — generá un transaccion_id nuevo" }, { status: 409 });
+      return bancardJson(tid, "error", [msg("error", "PaymentNotAuthorized", "Transacción previamente reversada. Generá un tid nuevo.")], undefined, 403);
     }
-    // Ya aplicado: devolver respuesta idempotente
-    const { data: cuenta } = await supabase
-      .from("cuentas_por_cobrar")
-      .select("saldo, estado")
-      .eq("empresa_id", empresaId)
-      .eq("id", d.cuenta_id)
-      .maybeSingle();
-    const c = cuenta as { saldo: number | string; estado: string } | null;
-    return corsJson({
-      success: true,
-      ya_aplicado: true,
-      data: {
-        transaccion_id: transaccionId,
-        cuenta_id: d.cuenta_id,
-        cobro_id: d.cobro_id,
-        monto: Number(d.monto),
-        saldo_restante: c ? Number(c.saldo) : null,
-        estado_cuenta: c?.estado ?? null,
-        applied_at: d.applied_at,
+    if (Number(d.monto) !== amt || (d.numero_venta && d.numero_venta !== numeroVenta)) {
+      return bancardJson(tid, "error", [msg("error", "InvalidParameters", "tid ya existe con otros datos")], undefined, 422);
+    }
+    // Idempotente: devolver éxito con el aut_cod original
+    return bancardJson(
+      tid,
+      "success",
+      [msg("success", "PaymentProcessed", "El pago ya fue autorizado previamente (idempotente)")],
+      {
+        tkt: d.id,
+        aut_cod: d.cobro_id ?? d.id,
+        prnt_msg: buildPrintMsg(documento, numeroVenta, amt, curr, d.applied_at),
       },
-    });
+      200,
+    );
   }
 
-  // 2) Buscar la cuenta por numero_venta
-  const { data: cxcRaw, error: errCxc } = await supabase
+  // ── 2) Buscar la cuota ──
+  const { data: cxcRaw } = await supabase
     .from("cuentas_por_cobrar")
-    .select("id, cliente_id, venta_id, total, saldo, estado")
+    .select("id, cliente_id, venta_id, total, saldo, estado, fecha_vencimiento")
     .eq("empresa_id", empresaId)
     .eq("numero_venta", numeroVenta)
     .maybeSingle();
-  if (errCxc) return corsJson({ success: false, error: errCxc.message }, { status: 400 });
-  if (!cxcRaw) return corsJson({ success: false, error: "cuota no encontrada" }, { status: 404 });
-  const cxc = cxcRaw as { id: string; cliente_id: string; venta_id: string; total: number; saldo: number; estado: string };
 
-  if (cxc.estado === "anulado") return corsJson({ success: false, error: "cuenta anulada" }, { status: 400 });
-  if (Number(cxc.saldo) <= 0) return corsJson({ success: false, error: "cuenta ya pagada" }, { status: 400 });
-  if (monto > Number(cxc.saldo) + 0.001) {
-    return corsJson({ success: false, error: `monto (${monto}) supera saldo pendiente (${cxc.saldo})` }, { status: 400 });
+  if (!cxcRaw) {
+    return bancardJson(tid, "error", [msg("error", "SubscriberWithoutDebt", `No se encontró cuota ${numeroVenta}`)], undefined, 403);
+  }
+  const cxc = cxcRaw as { id: string; cliente_id: string; venta_id: string; total: number; saldo: number; estado: string; fecha_vencimiento: string | null };
+
+  if (cxc.estado === "anulado" || Number(cxc.saldo) <= 0) {
+    return bancardJson(tid, "error", [msg("error", "SubscriberWithoutDebt", "La cuota no tiene deuda pendiente")], undefined, 403);
+  }
+  if (amt > Number(cxc.saldo) + 0.001) {
+    return bancardJson(tid, "error", [msg("error", "InvalidParameters", `amt (${amt}) supera saldo pendiente (${cxc.saldo})`)], undefined, 422);
   }
 
-  // 3) Aplicar el cobro reusando la lógica del módulo Pagos
+  // ── 3) Aplicar el cobro ──
   let result: { cobro_id: string; saldo_nuevo: number; estado: string };
   try {
     result = await registrarCobro(supabase, empresaId, {
       cuenta_por_cobrar_id: cxc.id,
-      monto,
-      metodo_pago: metodo === "efectivo" || metodo === "transferencia" || metodo === "tarjeta" ? metodo : "otro",
-      referencia: referencia ?? `${auth.partner_id}:${transaccionId}`,
-      fecha_pago: fechaPago,
-      usuario_nombre: `Pago externo · ${auth.partner_id}`,
-      observaciones: `transaccion_id=${transaccionId}`,
+      monto: amt,
+      metodo_pago: "transferencia",
+      referencia: `bancard:tid=${tidStr}`,
+      fecha_pago: appliedAtIso,
+      usuario_nombre: "Bancard",
+      observaciones: `tid=${tidStr} · sub_id=${documento} · inv_id=${numeroVenta}`,
     });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Error al aplicar pago";
-    return corsJson({ success: false, error: msg }, { status: 500 });
+    const errMsg = e instanceof Error ? e.message : "Error al aplicar pago";
+    return bancardJson(tid, "error", [msg("error", "HostTransactionError", errMsg)], undefined, 403);
   }
 
-  // 4) Log en pagos_externos (best-effort: si falla, ya cobró pero no quedó log → riesgo de duplicado en reintento)
+  // ── 4) Log de pago externo (idempotency table) ──
   await supabase
     .from("pagos_externos")
     .insert({
       empresa_id: empresaId,
-      partner_id: auth.partner_id,
-      transaccion_id: transaccionId,
+      partner_id: partnerId,
+      transaccion_id: tidStr,
       cuenta_id: cxc.id,
       numero_venta: numeroVenta,
       cobro_id: result.cobro_id,
-      monto,
-      moneda,
+      monto: amt,
+      moneda: curr === "USD" ? "USD" : "GS",
       estado: "aplicado",
-      metodo_pago: metodo,
-      referencia,
-      applied_at: fechaPago,
+      metodo_pago: "transferencia",
+      referencia: `bancard tid=${tidStr}`,
+      applied_at: appliedAtIso,
       raw_request: body,
-      ip: clientIp(request),
     });
 
-  return corsJson({
-    success: true,
-    data: {
-      transaccion_id: transaccionId,
-      cuenta_id: cxc.id,
-      cobro_id: result.cobro_id,
-      monto,
-      saldo_restante: result.saldo_nuevo,
-      estado_cuenta: result.estado,
-      applied_at: fechaPago,
+  return bancardJson(
+    tid,
+    "success",
+    [msg("success", "PaymentProcessed", "El pago fue autorizado")],
+    {
+      tkt: result.cobro_id,
+      aut_cod: result.cobro_id,
+      prnt_msg: buildPrintMsg(documento, numeroVenta, amt, curr, appliedAtIso),
     },
-  });
+    200,
+  );
+}
+
+function msg(level: BancardMessage["level"], key: string, dsc: string): BancardMessage {
+  return { level, key, dsc: [dsc] };
+}
+
+function buildPrintMsg(sub: string, inv: string, amt: number, curr: string, when: string): string[] {
+  const money = `${curr} ${Math.round(amt).toLocaleString("es-PY")}`;
+  return [
+    "GREEN LAND SRL",
+    "RUC 80140360-0",
+    "Pago autorizado",
+    `Abonado: ${sub}`,
+    `Cuota:   ${inv}`,
+    `Monto:   ${money}`,
+    `Fecha:   ${when.slice(0, 19).replace("T", " ")}`,
+    "Gracias por su pago.",
+  ];
 }

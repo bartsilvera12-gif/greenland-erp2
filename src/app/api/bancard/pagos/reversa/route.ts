@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
-import { corsJson, corsPreflight, getPublicSupabase, resolvePublicEmpresaId } from "@/lib/public-api/cors";
-import { requireApiKey } from "@/lib/public-api/api-key";
+import { corsPreflight, getPublicSupabase, resolvePublicEmpresaId } from "@/lib/public-api/cors";
+import { bancardJson, parseTid, type BancardMessage } from "@/lib/bancard/format";
 
 export const dynamic = "force-dynamic";
 
@@ -9,79 +9,78 @@ export async function OPTIONS() { return corsPreflight(); }
 /**
  * POST /api/bancard/pagos/reversa
  *
- * Anula un pago previamente aplicado y restablece el saldo de la cuenta.
- *
- * Headers:
- *   X-Api-Key:     <EXTERNAL_PAYMENT_API_KEY>
- *   X-Partner-Id:  bancard
- *   Content-Type:  application/json
+ * Cumple con la spec Bancard "Reversar Transacción".
  *
  * Body JSON:
- *   { "transaccion_id": "EXT-12345" }
+ *   { "tid": 11332 }
  *
- * Respuestas:
- *   200 success → { transaccion_id, cuenta_id, saldo_restablecido, estado_cuenta, reversed_at }
- *   200 ya reversado (idempotente) → mismo shape con `ya_reversado: true`
- *   401 → API key inválida
- *   404 → transaccion_id no existe para este partner
+ * Idempotente: si el tid ya está reversado, devuelve success igual.
  */
 export async function POST(request: NextRequest) {
-  const auth = requireApiKey(request);
-  if (auth instanceof Response) return auth;
-
   let body: Record<string, unknown> | null = null;
-  try { body = (await request.json()) as Record<string, unknown>; } catch { return corsJson({ success: false, error: "JSON inválido" }, { status: 400 }); }
-  if (!body) return corsJson({ success: false, error: "Body vacío" }, { status: 400 });
+  try { body = (await request.json()) as Record<string, unknown>; }
+  catch { return bancardJson(0, "error", [msg("error", "InvalidParameters", "JSON inválido")], undefined, 422); }
+  if (!body) return bancardJson(0, "error", [msg("error", "InvalidParameters", "Body vacío")], undefined, 422);
 
-  const transaccionId = typeof body.transaccion_id === "string" ? body.transaccion_id.trim().slice(0, 80) : "";
-  if (!transaccionId) return corsJson({ success: false, error: "transaccion_id requerido" }, { status: 400 });
+  const tid = parseTid(body.tid);
+  if (tid === null) {
+    return bancardJson(0, "error", [msg("error", "MissingParameters", "tid requerido")], undefined, 403);
+  }
 
   const supabase = getPublicSupabase();
   const empresaId = await resolvePublicEmpresaId(supabase);
-  if (!empresaId) return corsJson({ success: false, error: "empresa no resuelta" }, { status: 500 });
+  if (!empresaId) {
+    return bancardJson(tid, "error", [msg("error", "HostTransactionError", "empresa no resuelta")], undefined, 403);
+  }
+
+  const partnerId = "bancard";
+  const tidStr = String(tid);
 
   // 1) Buscar el pago externo
   const { data: pagoRaw } = await supabase
     .from("pagos_externos")
     .select("id, cuenta_id, cobro_id, monto, estado, reversed_at")
     .eq("empresa_id", empresaId)
-    .eq("partner_id", auth.partner_id)
-    .eq("transaccion_id", transaccionId)
+    .eq("partner_id", partnerId)
+    .eq("transaccion_id", tidStr)
     .maybeSingle();
 
-  if (!pagoRaw) return corsJson({ success: false, error: "transaccion_id no encontrado" }, { status: 404 });
+  if (!pagoRaw) {
+    return bancardJson(tid, "error", [msg("error", "TransactionNotReversed", "tid no encontrado")], undefined, 403);
+  }
   const pago = pagoRaw as { id: string; cuenta_id: string; cobro_id: string | null; monto: number; estado: string; reversed_at: string | null };
 
+  // Idempotencia: ya reversado
   if (pago.estado === "reversado") {
-    return corsJson({
-      success: true,
-      ya_reversado: true,
-      data: { transaccion_id: transaccionId, cuenta_id: pago.cuenta_id, reversed_at: pago.reversed_at },
-    });
+    return bancardJson(
+      tid,
+      "success",
+      [msg("success", "TransactionReversed", "Transacción ya reversada previamente")],
+      undefined,
+      200,
+    );
   }
 
   const reversedAt = new Date().toISOString();
-  const motivo = `reversa técnica ${auth.partner_id === "bancard" ? "Bancard" : auth.partner_id}`;
 
-  // 2) SOFT-DELETE del cobro: marcamos reversado en vez de borrar. Conserva
-  //    auditoría contable completa (monto, fecha original, método, etc.).
+  // 2) Soft-delete del cobro
   if (pago.cobro_id) {
-    const updCobro = await supabase
+    const upd = await supabase
       .from("cobros_clientes")
       .update({
         estado: "reversado",
         reversed_at: reversedAt,
-        reversa_transaccion_id: transaccionId,
-        reversa_motivo: motivo,
+        reversa_transaccion_id: tidStr,
+        reversa_motivo: "reversa técnica Bancard",
       })
       .eq("empresa_id", empresaId)
       .eq("id", pago.cobro_id);
-    if (updCobro.error) {
-      return corsJson({ success: false, error: `Error al marcar cobro como reversado: ${updCobro.error.message}` }, { status: 500 });
+    if (upd.error) {
+      return bancardJson(tid, "error", [msg("error", "HostTransactionError", upd.error.message)], undefined, 403);
     }
   }
 
-  // 3) Restaurar saldo y estado en cuentas_por_cobrar
+  // 3) Restaurar saldo
   const { data: cuentaRaw } = await supabase
     .from("cuentas_por_cobrar")
     .select("id, total, saldo")
@@ -89,7 +88,9 @@ export async function POST(request: NextRequest) {
     .eq("id", pago.cuenta_id)
     .maybeSingle();
 
-  if (!cuentaRaw) return corsJson({ success: false, error: "cuenta no encontrada" }, { status: 404 });
+  if (!cuentaRaw) {
+    return bancardJson(tid, "error", [msg("error", "HostTransactionError", "cuenta no encontrada")], undefined, 403);
+  }
   const cuenta = cuentaRaw as { id: string; total: number; saldo: number };
   const total = Number(cuenta.total) || 0;
   const saldoActual = Number(cuenta.saldo) || 0;
@@ -98,26 +99,28 @@ export async function POST(request: NextRequest) {
 
   const updC = await supabase
     .from("cuentas_por_cobrar")
-    .update({ saldo: saldoNuevo, estado: estadoNuevo, updated_at: new Date().toISOString() })
+    .update({ saldo: saldoNuevo, estado: estadoNuevo, updated_at: reversedAt })
     .eq("empresa_id", empresaId)
     .eq("id", pago.cuenta_id);
-  if (updC.error) return corsJson({ success: false, error: `Error al actualizar saldo: ${updC.error.message}` }, { status: 500 });
+  if (updC.error) {
+    return bancardJson(tid, "error", [msg("error", "HostTransactionError", updC.error.message)], undefined, 403);
+  }
 
-  // 4) Marcar pago externo como reversado. Mantengo cobro_id para que el log
-  //    quede linkeado al registro contable (que ahora está como reversado).
+  // 4) Marcar pago externo como reversado
   await supabase
     .from("pagos_externos")
     .update({ estado: "reversado", reversed_at: reversedAt })
     .eq("id", pago.id);
 
-  return corsJson({
-    success: true,
-    data: {
-      transaccion_id: transaccionId,
-      cuenta_id: pago.cuenta_id,
-      saldo_restablecido: saldoNuevo,
-      estado_cuenta: estadoNuevo,
-      reversed_at: reversedAt,
-    },
-  });
+  return bancardJson(
+    tid,
+    "success",
+    [msg("success", "TransactionReversed", "Transacción reversada satisfactoriamente")],
+    undefined,
+    200,
+  );
+}
+
+function msg(level: BancardMessage["level"], key: string, dsc: string): BancardMessage {
+  return { level, key, dsc: [dsc] };
 }
