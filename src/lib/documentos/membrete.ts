@@ -8,7 +8,7 @@
  */
 
 export const EMPRESA_DOC = {
-  nombre: "Autorepuestos Felix Bogado",
+  nombre: "Green Land",
   actividad: [
     "Venta de repuestos y accesorios para vehículos automotores",
   ],
