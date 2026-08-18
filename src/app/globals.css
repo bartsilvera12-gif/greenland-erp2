@@ -374,5 +374,23 @@ input[type="radio"] {
   accent-color: #4FAEB2;
 }
 
+/* Autofill (Chrome/Edge/Safari): saca el fondo azul/amarillo que agrega el
+   browser al detectar sugerencias del password manager. Mantiene el fondo
+   blanco del formulario y el color de texto normal.
+   Truco: usar box-shadow inset con transición larga (el color de autofill
+   se aplica como box-shadow, no como background, por diseño de webkit). */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+input:-webkit-autofill:active,
+textarea:-webkit-autofill,
+select:-webkit-autofill {
+  -webkit-box-shadow: 0 0 0 1000px #FFFFFF inset !important;
+          box-shadow: 0 0 0 1000px #FFFFFF inset !important;
+  -webkit-text-fill-color: #0F172A !important;
+  caret-color: #0F172A !important;
+  transition: background-color 5000s ease-in-out 0s;
+}
+
 
 
