@@ -98,6 +98,26 @@ function toNum(v: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+/** Parsea un decimal aceptando coma o punto como separador.
+ *  "12,50" → 12.5, "384,38" → 384.38, "" → null.
+ *  Ignora separadores de miles (punto o espacio) si vienen mezclados. */
+function parseDec(v: string): number | null {
+  const s = String(v ?? "").trim();
+  if (!s) return null;
+  // Si hay coma, tratarla como separador decimal: reemplazar . por nada (miles) y , por .
+  const norm = s.includes(",")
+    ? s.replace(/\./g, "").replace(",", ".")
+    : s;
+  const n = Number(norm.replace(/\s+/g, ""));
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Muestra un decimal con coma es-PY (hasta 2 fracciones si tiene, sin ceros a la derecha). */
+function fmtDec(n: number | null | undefined): string {
+  if (n == null || !Number.isFinite(n)) return "";
+  return String(n).replace(".", ",");
+}
+
 /** Formatea un número con separadores de miles es-PY. Devuelve "" si null. */
 function fmtMiles(n: number | null): string {
   if (n == null) return "";
@@ -360,21 +380,23 @@ export default function PropiedadForm({
           <div>
             <label className={labelClass}>Superficie (m²)</label>
             <input
-              type="number"
-              step="any"
+              type="text"
+              inputMode="decimal"
               className={inputClass}
-              value={values.superficie_m2 ?? ""}
-              onChange={(e) => up("superficie_m2", toNum(e.target.value))}
+              placeholder="Ej. 384,38"
+              value={fmtDec(values.superficie_m2)}
+              onChange={(e) => up("superficie_m2", parseDec(e.target.value))}
             />
           </div>
           <div>
             <label className={labelClass}>Terreno (m²)</label>
             <input
-              type="number"
-              step="any"
+              type="text"
+              inputMode="decimal"
               className={inputClass}
-              value={values.terreno_m2 ?? ""}
-              onChange={(e) => up("terreno_m2", toNum(e.target.value))}
+              placeholder="Ej. 384,38"
+              value={fmtDec(values.terreno_m2)}
+              onChange={(e) => up("terreno_m2", parseDec(e.target.value))}
             />
           </div>
         </div>
@@ -556,11 +578,12 @@ export default function PropiedadForm({
                   <div>
                     <label className="block text-[10px] font-medium text-slate-500 mb-0.5">Metros</label>
                     <input
-                      type="number"
-                      step="any"
+                      type="text"
+                      inputMode="decimal"
                       className={inputClass}
-                      value={m.m ?? ""}
-                      onChange={(e) => upMedida(dir, { m: toNum(e.target.value) })}
+                      placeholder="Ej. 12,50"
+                      value={fmtDec(m.m)}
+                      onChange={(e) => upMedida(dir, { m: parseDec(e.target.value) })}
                     />
                   </div>
                   <div>
