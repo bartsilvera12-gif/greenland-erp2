@@ -84,6 +84,10 @@ export async function apiCreateCliente(data: {
   ciudad?: string;
   pais?: string;
   condicion_pago?: string;
+  credito_medio?: string;
+  credito_cuotas_cantidad?: number;
+  credito_monto_cuota?: number;
+  credito_primera_cuota?: string;
   moneda_preferida?: string;
   estado?: string;
   usa_nota_remision?: boolean;
