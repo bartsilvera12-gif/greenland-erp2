@@ -50,7 +50,12 @@ export interface Cliente {
 
   valor_cliente?:      number;          // valor estimado anual en GS
 
-  condicion_pago?:     string;          // CONTADO / 30 DÍAS / 60 DÍAS…
+  condicion_pago?:     string;          // CONTADO / CREDITO / 30 DÍAS / 60 DÍAS…
+  /** Solo aplica cuando condicion_pago === "CREDITO": detalles de la financiación acordada al alta. */
+  credito_medio?:            string | null;
+  credito_cuotas_cantidad?:  number | null;
+  credito_monto_cuota?:      number | null;
+  credito_primera_cuota?:    string | null;   // YYYY-MM-DD
   moneda_preferida?:   "GS" | "USD";
   vendedor_asignado?:  string;
   /** Usuario ERP responsable comercial (FK zentra_erp.usuarios); el texto libre sigue en vendedor_asignado. */
