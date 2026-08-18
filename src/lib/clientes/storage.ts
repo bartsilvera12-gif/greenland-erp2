@@ -436,6 +436,22 @@ export function construirPatchActualizacionCliente(datos: ActualizarClienteInput
   if (datos.linkedin !== undefined) patch.linkedin = datos.linkedin ?? null;
   if (datos.valor_cliente !== undefined) patch.valor_cliente = datos.valor_cliente ?? null;
   if (datos.condicion_pago !== undefined) patch.condicion_pago = datos.condicion_pago ?? null;
+  if ((datos as Record<string, unknown>).credito_medio !== undefined) {
+    const v = (datos as Record<string, unknown>).credito_medio;
+    patch.credito_medio = typeof v === "string" && v.trim() ? v.trim() : null;
+  }
+  if ((datos as Record<string, unknown>).credito_cuotas_cantidad !== undefined) {
+    const n = Number((datos as Record<string, unknown>).credito_cuotas_cantidad);
+    patch.credito_cuotas_cantidad = Number.isFinite(n) && n > 0 ? Math.trunc(n) : null;
+  }
+  if ((datos as Record<string, unknown>).credito_monto_cuota !== undefined) {
+    const n = Number((datos as Record<string, unknown>).credito_monto_cuota);
+    patch.credito_monto_cuota = Number.isFinite(n) && n > 0 ? n : null;
+  }
+  if ((datos as Record<string, unknown>).credito_primera_cuota !== undefined) {
+    const v = (datos as Record<string, unknown>).credito_primera_cuota;
+    patch.credito_primera_cuota = typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null;
+  }
   if (datos.moneda_preferida !== undefined) patch.moneda_preferida = datos.moneda_preferida ?? null;
   if (datos.vendedor_asignado !== undefined) patch.vendedor_asignado = datos.vendedor_asignado ?? null;
   if (datos.vendedor_usuario_id !== undefined) {
