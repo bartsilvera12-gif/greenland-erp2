@@ -47,5 +47,8 @@ export interface Venta {
   /** Número de nota de remisión (NR-XXXXXX) si genera_nota_remision. */
   nota_remision_numero?: string | null;
 
+  /** Estado del comprobante: pendiente | completada | anulada. Ausente en payloads viejos → tratar como 'completada'. */
+  estado?: "pendiente" | "completada" | "anulada";
+
   fecha: string;             // ISO string, generado automáticamente
 }

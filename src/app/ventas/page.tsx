@@ -151,23 +151,33 @@ export default function VentasPage() {
   const [filtroIva,  setFiltroIva]  = useState<TipoIvaVenta | "">("");
   const [cargandoLista, setCargandoLista] = useState(true);
   const [anulandoId, setAnulandoId] = useState<string | null>(null);
+  const [confirmAnular, setConfirmAnular] = useState<Venta | null>(null);
+  const [toast, setToast] = useState<{ msg: string; tipo: "ok" | "err" } | null>(null);
 
-  async function anularVenta(v: Venta) {
-    if (!window.confirm(`¿Anular la venta ${v.numero_control}? Se anulará la cuenta por cobrar asociada. Los cobros ya registrados no se tocan.`)) return;
+  function mostrarToast(msg: string, tipo: "ok" | "err" = "ok") {
+    setToast({ msg, tipo });
+    window.setTimeout(() => setToast(null), 3000);
+  }
+
+  async function confirmarAnular() {
+    const v = confirmAnular;
+    if (!v) return;
     setAnulandoId(v.id);
     try {
       const res = await fetchWithSupabaseSession(`/api/ventas/${v.id}/anular`, { method: "POST" });
       const j = await res.json();
       if (!res.ok || j?.success === false) {
-        alert(j?.error ?? "No se pudo anular la venta.");
+        mostrarToast(j?.error ?? "No se pudo anular la venta.", "err");
         return;
       }
       const data = await getVentas();
       setTodas([...data].sort((a, b) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime()));
+      mostrarToast(`Venta ${v.numero_control} anulada.`);
     } catch {
-      alert("Error de red al anular la venta.");
+      mostrarToast("Error de red al anular la venta.", "err");
     } finally {
       setAnulandoId(null);
+      setConfirmAnular(null);
     }
   }
 
@@ -375,10 +385,14 @@ export default function VentasPage() {
               ) : (
                 filtradas.map((v) => {
                   const cantTotal = v.items.reduce((s, i) => s + i.cantidad, 0);
+                  const anulada = v.estado === "anulada";
                   return (
-                    <tr key={v.id} className="border-b border-slate-200 last:border-0 hover:bg-[#4FAEB2]/[0.04] transition-colors">
+                    <tr key={v.id} className={`border-b border-slate-200 last:border-0 transition-colors ${anulada ? "bg-slate-50 text-slate-400" : "hover:bg-[#4FAEB2]/[0.04]"}`}>
                       <td className="py-4 pr-4 font-mono text-xs text-gray-500 align-middle">
-                        {v.numero_control}
+                        <div className="flex items-center gap-2">
+                          <span className={anulada ? "line-through" : ""}>{v.numero_control}</span>
+                          {anulada && <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-semibold text-rose-700">Anulada</span>}
+                        </div>
                       </td>
                       <td className="py-4 pr-4 align-middle">
                         <ResumenProductos v={v} />
@@ -437,22 +451,26 @@ export default function VentasPage() {
                               Nota de remisión
                             </a>
                           )}
-                          <Link
-                            href={`/ventas/nueva?editar=${v.id}`}
-                            className="inline-flex items-center justify-center rounded-md border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-100 transition-colors"
-                            title="Editar esta venta (sólo si no tiene cobros)"
-                          >
-                            Editar
-                          </Link>
-                          <button
-                            type="button"
-                            onClick={() => anularVenta(v)}
-                            disabled={anulandoId === v.id}
-                            className="inline-flex items-center justify-center rounded-md border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-medium text-rose-700 hover:bg-rose-100 transition-colors disabled:opacity-50"
-                            title="Anular esta venta (soft-delete)"
-                          >
-                            {anulandoId === v.id ? "Anulando…" : "Anular"}
-                          </button>
+                          {anulada ? null : (
+                            <>
+                              <Link
+                                href={`/ventas/nueva?editar=${v.id}`}
+                                className="inline-flex items-center justify-center rounded-md border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-100 transition-colors"
+                                title="Editar esta venta (sólo si no tiene cobros)"
+                              >
+                                Editar
+                              </Link>
+                              <button
+                                type="button"
+                                onClick={() => setConfirmAnular(v)}
+                                disabled={anulandoId === v.id}
+                                className="inline-flex items-center justify-center rounded-md border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-medium text-rose-700 hover:bg-rose-100 transition-colors disabled:opacity-50"
+                                title="Anular esta venta (soft-delete)"
+                              >
+                                {anulandoId === v.id ? "Anulando…" : "Anular"}
+                              </button>
+                            </>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -467,6 +485,50 @@ export default function VentasPage() {
 
       {/* FAB mobile: acceso 1-tap a "+ Nueva venta" desde cualquier scroll position */}
       <MobileFab href="/ventas/nueva" label="Nueva venta" />
+
+      {toast && (
+        <div
+          className={`fixed top-4 right-4 z-[70] rounded-lg px-4 py-2.5 text-sm font-medium text-white shadow-lg ${
+            toast.tipo === "err" ? "bg-rose-600" : "bg-emerald-600"
+          }`}
+          role="status"
+        >
+          {toast.tipo === "err" ? "✗ " : "✓ "}{toast.msg}
+        </div>
+      )}
+
+      {confirmAnular && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-xl bg-white shadow-xl">
+            <div className="border-b border-slate-200 px-5 py-4">
+              <h3 className="text-base font-semibold text-slate-900">Anular venta</h3>
+              <p className="mt-0.5 text-xs text-slate-500 font-mono">{confirmAnular.numero_control}</p>
+            </div>
+            <div className="px-5 py-4 space-y-2 text-sm text-slate-700">
+              <p>Se marcará la venta y su cuenta por cobrar como <span className="font-semibold text-rose-700">anuladas</span>.</p>
+              <p className="text-xs text-slate-500">Los cobros ya registrados se conservan como historial. La acción no se puede deshacer desde la UI.</p>
+            </div>
+            <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 border-t border-slate-200 px-5 py-4">
+              <button
+                type="button"
+                onClick={() => setConfirmAnular(null)}
+                disabled={!!anulandoId}
+                className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={confirmarAnular}
+                disabled={!!anulandoId}
+                className="inline-flex items-center justify-center rounded-md bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700 disabled:opacity-50"
+              >
+                {anulandoId ? "Anulando…" : "Sí, anular"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
