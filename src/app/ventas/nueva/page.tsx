@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { fetchWithSupabaseSession } from "@/lib/api/fetch-with-supabase-session";
 import SearchableSelect, { type SearchableOption } from "@/components/ui/SearchableSelect";
 
@@ -97,8 +97,19 @@ function Total({
   );
 }
 
-export default function NuevaVentaPage() {
+export default function NuevaVentaPageWrapper() {
+  return (
+    <Suspense fallback={<div className="px-6 py-6 text-sm text-slate-500">Cargando…</div>}>
+      <NuevaVentaPage />
+    </Suspense>
+  );
+}
+
+function NuevaVentaPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const editarId = searchParams.get("editar");
+  const modoEdicion = !!editarId;
 
   const [clientes, setClientes] = useState<ClienteOpt[]>([]);
   const [clienteId, setClienteId] = useState<string>("");
@@ -119,6 +130,8 @@ export default function NuevaVentaPage() {
   const [observaciones, setObservaciones] = useState("");
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [cargandoEdicion, setCargandoEdicion] = useState(modoEdicion);
+  const [bloqueoEdicion, setBloqueoEdicion] = useState<string | null>(null);
 
   useEffect(() => {
     void (async () => {
@@ -139,6 +152,52 @@ export default function NuevaVentaPage() {
       } catch { /* sin propiedades */ }
     })();
   }, []);
+
+  // Precarga de la venta a editar.
+  useEffect(() => {
+    if (!editarId) return;
+    setCargandoEdicion(true);
+    void (async () => {
+      try {
+        const res = await fetchWithSupabaseSession(`/api/ventas/${editarId}`, { cache: "no-store" });
+        const json = await res.json();
+        if (!res.ok || json?.success === false) {
+          setBloqueoEdicion(json?.error ?? "No se pudo cargar la venta a editar.");
+          return;
+        }
+        if (json?.data?.editable === false) {
+          setBloqueoEdicion(json?.data?.motivo_no_editable ?? "Esta venta no se puede editar.");
+        }
+        const v = json?.data?.venta;
+        if (!v) { setBloqueoEdicion("Datos de la venta incompletos."); return; }
+        setClienteId(v.cliente_id ?? "");
+        setRazonSocial(v.cliente_razon_social ?? "");
+        setRuc(v.cliente_ruc ?? "");
+        setDocumento(v.cliente_documento ?? "");
+        setMoneda(v.moneda === "USD" ? "USD" : "GS");
+        setTipoIva((v.tipo_iva === "EXENTA" || v.tipo_iva === "5%" || v.tipo_iva === "10%") ? v.tipo_iva : "10%");
+        if (Array.isArray(v.servicios) && v.servicios.length > 0) {
+          setServicios(v.servicios.map((s: { descripcion?: string; monto?: number }) => ({
+            descripcion: String(s.descripcion ?? ""),
+            monto: Number(s.monto) || 0,
+          })));
+        } else if (v.total > 0) {
+          setServicios([{ descripcion: "Venta", monto: Number(v.total) || 0 }]);
+        }
+        setTipoVenta(v.tipo_venta === "CREDITO" ? "CREDITO" : "CONTADO");
+        if (v.cuotas_cantidad) setCuotasCantidad(Number(v.cuotas_cantidad));
+        if (v.cuota_monto) setCuotaMonto(Number(v.cuota_monto));
+        if (v.fecha_primera_cuota) setFechaPrimeraCuota(String(v.fecha_primera_cuota).slice(0, 10));
+        if (v.intervalo_dias) setIntervaloDias(Number(v.intervalo_dias));
+        setObservaciones(v.observaciones ?? "");
+        setPropiedadId(v.propiedad_id ?? "");
+      } catch {
+        setBloqueoEdicion("Error de red al cargar la venta.");
+      } finally {
+        setCargandoEdicion(false);
+      }
+    })();
+  }, [editarId]);
 
   function onPropiedadSelected(id: string) {
     setPropiedadId(id);
@@ -199,7 +258,8 @@ export default function NuevaVentaPage() {
 
     setSaving(true);
     try {
-      const res = await fetchWithSupabaseSession("/api/ventas/servicio", {
+      const url = modoEdicion ? `/api/ventas/${editarId}/reemplazar` : "/api/ventas/servicio";
+      const res = await fetchWithSupabaseSession(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -248,12 +308,23 @@ export default function NuevaVentaPage() {
         >
           ← Volver a ventas
         </button>
-        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Nueva venta</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
+          {modoEdicion ? "Editar venta" : "Nueva venta"}
+        </h1>
         <p className="mt-1 text-sm text-slate-500">
-          Cargá la razón social, los servicios y el IVA aplicable.
+          {modoEdicion
+            ? "Modificá los datos y guardá para reemplazar la venta original."
+            : "Cargá la razón social, los servicios y el IVA aplicable."}
         </p>
       </header>
 
+      {cargandoEdicion ? (
+        <div className="rounded-xl border border-slate-200 bg-white p-6 text-sm text-slate-500">Cargando venta…</div>
+      ) : bloqueoEdicion ? (
+        <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+          {bloqueoEdicion}
+        </div>
+      ) : (
       <form onSubmit={onSubmit} className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm space-y-6">
         {err ? (
           <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{err}</div>
@@ -520,7 +591,7 @@ export default function NuevaVentaPage() {
             disabled={saving}
             className="inline-flex items-center rounded-xl bg-[#4FAEB2] px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-[#3F8E91] disabled:opacity-60"
           >
-            {saving ? "Guardando…" : "Guardar venta"}
+            {saving ? "Guardando…" : (modoEdicion ? "Guardar cambios" : "Guardar venta")}
           </button>
           <button
             type="button"
@@ -531,6 +602,7 @@ export default function NuevaVentaPage() {
           </button>
         </div>
       </form>
+      )}
     </div>
   );
 }

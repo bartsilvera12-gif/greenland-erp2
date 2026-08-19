@@ -437,6 +437,13 @@ export default function VentasPage() {
                               Nota de remisión
                             </a>
                           )}
+                          <Link
+                            href={`/ventas/nueva?editar=${v.id}`}
+                            className="inline-flex items-center justify-center rounded-md border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-100 transition-colors"
+                            title="Editar esta venta (sólo si no tiene cobros)"
+                          >
+                            Editar
+                          </Link>
                           <button
                             type="button"
                             onClick={() => anularVenta(v)}
