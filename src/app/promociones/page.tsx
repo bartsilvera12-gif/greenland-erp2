@@ -47,6 +47,7 @@ export default function PromocionesPage() {
   const [items, setItems] = useState<Promocion[]>([]);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<FormState | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [toDelete, setToDelete] = useState<Promocion | null>(null);
@@ -64,6 +65,14 @@ export default function PromocionesPage() {
   }, []);
 
   useEffect(() => { void load(); }, [load]);
+
+  // Cerrar preview con Esc
+  useEffect(() => {
+    if (!previewUrl) return;
+    function onKey(e: KeyboardEvent) { if (e.key === "Escape") setPreviewUrl(null); }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [previewUrl]);
 
   async function uploadBanner(file: File, id: string): Promise<string | null> {
     const form = new FormData();
@@ -155,8 +164,18 @@ export default function PromocionesPage() {
             <article key={p.id} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
               <div className="relative h-48 bg-slate-100">
                 {p.banner_url ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={p.banner_url} alt={p.titulo} className="h-full w-full object-cover" />
+                  <button
+                    type="button"
+                    onClick={() => setPreviewUrl(p.banner_url)}
+                    title="Ver imagen completa"
+                    className="group relative h-full w-full cursor-zoom-in overflow-hidden"
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={p.banner_url} alt={p.titulo} className="h-full w-full object-cover transition-transform group-hover:scale-105" />
+                    <span className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 transition-opacity group-hover:opacity-100">
+                      <span className="rounded-md bg-white/90 px-2.5 py-1 text-xs font-semibold text-slate-800">Ver completa</span>
+                    </span>
+                  </button>
                 ) : (
                   <div className="flex h-full w-full items-center justify-center text-slate-400">
                     <ImagePlus className="h-10 w-10" />
@@ -317,6 +336,35 @@ export default function PromocionesPage() {
         onConfirm={confirmDelete}
         onClose={() => !deleting && setToDelete(null)}
       />
+
+      {/* Lightbox — imagen completa al hacer click en el banner */}
+      {previewUrl ? (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/85 p-4 cursor-zoom-out"
+          onClick={() => setPreviewUrl(null)}
+          role="dialog"
+          aria-modal="true"
+        >
+          <button
+            type="button"
+            onClick={() => setPreviewUrl(null)}
+            className="absolute right-4 top-4 rounded-full bg-white/10 p-2 text-white hover:bg-white/20"
+            aria-label="Cerrar"
+          >
+            <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={previewUrl}
+            alt="Vista completa"
+            className="max-h-[92vh] max-w-[95vw] object-contain rounded-lg shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      ) : null}
     </div>
   );
 }
