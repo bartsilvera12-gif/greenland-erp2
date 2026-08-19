@@ -21,15 +21,17 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
 
     const vq = await c.supabase
       .from("ventas")
-      .select("id, estado")
+      .select("id, estado, numero_control")
       .eq("empresa_id", empresaId)
       .eq("id", id)
       .maybeSingle();
     if (vq.error) return NextResponse.json(errorResponse(vq.error.message), { status: 500 });
     if (!vq.data) return NextResponse.json(errorResponse(API_ERRORS.NOT_FOUND), { status: 404 });
-    if ((vq.data as { estado: string }).estado === "anulada") {
+    const vRow = vq.data as { estado: string; numero_control: string };
+    if (vRow.estado === "anulada") {
       return NextResponse.json(errorResponse("La venta está anulada; no puede editarse."), { status: 409 });
     }
+    const numeroControlOriginal = vRow.numero_control;
 
     // Bloquear si hay cobros vigentes.
     const cobQ = await c.supabase
@@ -61,8 +63,8 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
       .eq("id", id);
     if (delV.error) return NextResponse.json(errorResponse(`No se pudo borrar la venta original: ${delV.error.message}`), { status: 500 });
 
-    // Recrear la venta con los datos nuevos.
-    const r = await crearVentaServicio(c.supabase, empresaId, body);
+    // Recrear la venta con los datos nuevos, conservando el numero_control original.
+    const r = await crearVentaServicio(c.supabase, empresaId, body, { numeroControlOverride: numeroControlOriginal });
     return NextResponse.json(successResponse({
       venta: { id: r.venta_id, numero_control: r.numero_control, total: r.total, tipo_venta: r.tipo_venta },
       cliente_id: r.cliente_id,

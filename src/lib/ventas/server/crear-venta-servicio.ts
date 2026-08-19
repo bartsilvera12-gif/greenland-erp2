@@ -72,7 +72,8 @@ export interface CrearVentaServicioResult {
 export async function crearVentaServicio(
   supabase: SupabaseClient,
   empresaId: string,
-  body: CrearVentaServicioBody
+  body: CrearVentaServicioBody,
+  opts?: { numeroControlOverride?: string | null }
 ): Promise<CrearVentaServicioResult> {
   const razonSocial = String(body.cliente_razon_social ?? "").trim();
   if (!razonSocial) throw new VentaServicioError("La razón social del cliente es obligatoria");
@@ -112,7 +113,9 @@ export async function crearVentaServicio(
   const hoy = new Date();
   const yyyymmdd = `${hoy.getFullYear()}${String(hoy.getMonth() + 1).padStart(2, "0")}${String(hoy.getDate()).padStart(2, "0")}`;
   const rand = Math.floor(Math.random() * 1_000_000).toString().padStart(6, "0");
-  const numeroControl = `VTA-${yyyymmdd}-${rand}`;
+  const numeroControl = (opts?.numeroControlOverride && opts.numeroControlOverride.trim())
+    ? opts.numeroControlOverride.trim()
+    : `VTA-${yyyymmdd}-${rand}`;
 
   const propiedadId = body.propiedad_id && UUID_RE.test(body.propiedad_id) ? body.propiedad_id : null;
 
