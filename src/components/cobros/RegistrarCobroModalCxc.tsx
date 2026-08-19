@@ -12,6 +12,9 @@ export type CxcRef = {
   saldo: number;
   moneda?: string;
   cliente_nombre?: string | null;
+  /** Recargo por mora estimado (Gs) a la fecha de hoy. Se suma al saldo para el pago total. */
+  recargo_mora?: number;
+  dias_mora?: number;
 };
 
 type Entidad = { id: string; codigo: string | null; nombre: string; tipo: string | null };
@@ -51,9 +54,13 @@ export function RegistrarCobroModalCxc({
   // Tras un cobro exitoso, se ofrece generar el recibo (paso opcional).
   const [cobroOk, setCobroOk] = useState<{ cobroId: string; monto: number } | null>(null);
 
+  const recargo = Math.max(0, Number(cuenta?.recargo_mora) || 0);
+  const diasMora = Math.max(0, Number(cuenta?.dias_mora) || 0);
+  const totalACobrar = (cuenta?.saldo ?? 0) + recargo;
+
   useEffect(() => {
     if (open && cuenta) {
-      setMonto(String(cuenta.saldo));
+      setMonto(String(cuenta.saldo + Math.max(0, Number(cuenta.recargo_mora) || 0)));
       setMetodo("efectivo");
       setReferencia("");
       setTitular("");
@@ -86,7 +93,14 @@ export function RegistrarCobroModalCxc({
     if (!cuenta || guardando) return;
     const m = Number(monto);
     if (!(m > 0)) { setError("El monto debe ser mayor a cero."); return; }
-    if (m > cuenta.saldo + 0.001) { setError("El monto supera el saldo pendiente."); return; }
+    if (recargo > 0 && m < recargo - 0.001) {
+      setError(`El monto no cubre el recargo por mora (${fmtGs(recargo, cuenta.moneda)}).`);
+      return;
+    }
+    if (m > cuenta.saldo + recargo + 0.001) {
+      setError("El monto supera el total a cobrar (saldo + recargo).");
+      return;
+    }
     if (pideBanco && !entidadId) { setError("Seleccioná la entidad bancaria."); return; }
     if (pideBanco && !referencia.trim()) { setError("Ingresá la referencia / nº de operación."); return; }
     setGuardando(true);
@@ -159,11 +173,24 @@ export function RegistrarCobroModalCxc({
           <>
             <div className="px-5 py-4 space-y-3">
               {error && <div className="rounded-md bg-red-50 border border-red-200 p-2.5 text-sm text-red-700">{error}</div>}
+              {recargo > 0 && (
+                <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800 space-y-0.5">
+                  <div className="flex justify-between"><span>Saldo cuota</span><span className="tabular-nums">{fmtGs(cuenta.saldo, cuenta.moneda)}</span></div>
+                  <div className="flex justify-between"><span>Recargo por mora ({diasMora} día{diasMora === 1 ? "" : "s"} × Gs. 5.000)</span><span className="tabular-nums">{fmtGs(recargo, cuenta.moneda)}</span></div>
+                  <div className="flex justify-between font-semibold border-t border-red-200 pt-1 mt-1"><span>Total a cobrar</span><span className="tabular-nums">{fmtGs(totalACobrar, cuenta.moneda)}</span></div>
+                </div>
+              )}
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">Monto a cobrar</label>
                 <input type="number" min="0" step="1" value={monto} onChange={(e) => setMonto(e.target.value)} className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm" />
-                <button type="button" onClick={() => setMonto(String(cuenta.saldo))} className="mt-1 text-xs text-[#4FAEB2] hover:underline">Cobrar saldo total</button>
-                <p className="mt-1 text-[11px] text-slate-500">Si cobrás menos que el saldo, la cuenta sigue pendiente con la diferencia.</p>
+                <button type="button" onClick={() => setMonto(String(totalACobrar))} className="mt-1 text-xs text-[#4FAEB2] hover:underline">
+                  {recargo > 0 ? "Cobrar saldo + recargo" : "Cobrar saldo total"}
+                </button>
+                <p className="mt-1 text-[11px] text-slate-500">
+                  {recargo > 0
+                    ? "El recargo se cobra primero. El resto reduce el saldo de la cuota."
+                    : "Si cobrás menos que el saldo, la cuenta sigue pendiente con la diferencia."}
+                </p>
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">Método de pago</label>

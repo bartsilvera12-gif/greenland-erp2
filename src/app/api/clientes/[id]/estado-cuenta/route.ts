@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getTenantSupabaseFromAuth } from "@/lib/supabase/tenant-api";
 import { successResponse, errorResponse } from "@/lib/api/response";
 import { API_ERRORS } from "@/lib/api/errors";
+import { calcularDiasMora, calcularRecargoMora } from "@/lib/cobros/mora";
 
 /**
  * GET /api/clientes/[id]/estado-cuenta — resumen + cuentas por cobrar + cobros del cliente.
@@ -60,6 +61,8 @@ export async function GET(request: NextRequest, ctxParams: { params: Promise<{ i
       if (r.estado !== "anulado") saldoPendiente += saldo;
       const vencida = vigentePendiente && venc != null && venc < hoy;
       if (vencida) vencido += saldo;
+      const diasMora = vencida ? calcularDiasMora(venc, hoy) : 0;
+      const recargoMora = vencida ? calcularRecargoMora(venc, hoy) : 0;
       return {
         id: String(r.id),
         venta_id: r.venta_id ? String(r.venta_id) : null,
@@ -71,6 +74,8 @@ export async function GET(request: NextRequest, ctxParams: { params: Promise<{ i
         saldo,
         estado: r.estado,
         vencida,
+        dias_mora: diasMora,
+        recargo_mora: recargoMora,
       };
     });
 

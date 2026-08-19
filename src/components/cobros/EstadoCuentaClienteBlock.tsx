@@ -15,6 +15,8 @@ type Mov = {
   saldo: number;
   estado: string;
   vencida: boolean;
+  dias_mora?: number;
+  recargo_mora?: number;
 };
 type Resumen = { total_vendido: number; saldo_pendiente: number; total_cobrado: number; vencido: number };
 
@@ -42,6 +44,7 @@ function diasMora(venc: string | null, vencida: boolean): number {
   const diff = Math.floor((hoy.getTime() - v.getTime()) / 86400000);
   return diff > 0 ? diff : 0;
 }
+const RECARGO_POR_DIA_MORA = 5000;
 
 /**
  * Bloque de Estado de cuenta del cliente basado en cuentas_por_cobrar/cobros_clientes.
@@ -169,13 +172,15 @@ export function EstadoCuentaClienteBlock({
                     <th className="py-2.5 px-3 font-medium text-right">Cobrado</th>
                     <th className="py-2.5 px-3 font-medium text-right">Saldo</th>
                     <th className="py-2.5 px-3 font-medium text-center">Días mora</th>
+                    <th className="py-2.5 px-3 font-medium text-right">Recargo</th>
                     <th className="py-2.5 px-3 font-medium">Estado</th>
                     <th className="py-2.5 px-3 font-medium text-right">Operación</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {movs.map((x) => {
-                    const mora = diasMora(x.fecha_vencimiento, x.vencida);
+                    const mora = x.dias_mora ?? diasMora(x.fecha_vencimiento, x.vencida);
+                    const recargo = x.recargo_mora ?? mora * RECARGO_POR_DIA_MORA;
                     const estadoVis = x.vencida && x.estado !== "pagado" && x.estado !== "anulado" ? "vencido" : x.estado;
                     return (
                       <tr key={x.id} className="hover:bg-slate-50">
@@ -189,6 +194,7 @@ export function EstadoCuentaClienteBlock({
                         <td className="py-2.5 px-3 text-right tabular-nums text-emerald-700">{fmtGs(x.cobrado)}</td>
                         <td className="py-2.5 px-3 text-right tabular-nums font-semibold text-amber-600">{fmtGs(x.saldo)}</td>
                         <td className={`py-2.5 px-3 text-center tabular-nums ${mora > 0 ? "font-semibold text-red-600" : "text-slate-400"}`}>{mora > 0 ? mora : "—"}</td>
+                        <td className={`py-2.5 px-3 text-right tabular-nums ${recargo > 0 ? "font-semibold text-red-600" : "text-slate-400"}`}>{recargo > 0 ? fmtGs(recargo) : "—"}</td>
                         <td className="py-2.5 px-3">
                           <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${ESTADO_BADGE[estadoVis] ?? ESTADO_BADGE.pendiente}`}>
                             {estadoVis.charAt(0).toUpperCase() + estadoVis.slice(1)}
@@ -199,7 +205,7 @@ export function EstadoCuentaClienteBlock({
                             <span className="text-xs text-gray-400">—</span>
                           ) : (
                             <button
-                              onClick={() => setCobrando({ id: x.id, numero_venta: x.numero_venta, saldo: x.saldo })}
+                              onClick={() => setCobrando({ id: x.id, numero_venta: x.numero_venta, saldo: x.saldo, recargo_mora: recargo, dias_mora: mora })}
                               className="rounded-lg bg-[#4FAEB2] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#3F8E91]"
                             >
                               Cobrar
@@ -224,7 +230,7 @@ export function EstadoCuentaClienteBlock({
                       <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Saldo</span>
                       <p className={`text-sm font-bold tabular-nums ${m.saldoPend > 0 ? "text-amber-600" : "text-emerald-700"}`}>{fmtGs(m.saldoPend)}</p>
                     </td>
-                    <td colSpan={3} className="px-3 py-2.5" />
+                    <td colSpan={4} className="px-3 py-2.5" />
                   </tr>
                 </tfoot>
               </table>

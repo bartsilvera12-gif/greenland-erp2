@@ -1,4 +1,5 @@
 import type { AppSupabaseClient } from "@/lib/supabase/schema";
+import { calcularDiasMora, calcularRecargoMora } from "@/lib/cobros/mora";
 
 export type MetodoPagoCobro = "efectivo" | "transferencia" | "tarjeta" | "otro";
 
@@ -42,14 +43,14 @@ export async function registrarCobro(
   sb: AppSupabaseClient,
   empresaId: string,
   input: RegistrarCobroInput
-): Promise<{ cobro_id: string; saldo_nuevo: number; estado: string }> {
+): Promise<{ cobro_id: string; saldo_nuevo: number; estado: string; recargo_mora: number; dias_mora: number }> {
   const monto = round2(Number(input.monto) || 0);
   if (!(monto > 0)) throw new CobroError("El monto del cobro debe ser mayor a cero.");
   if (!input.cuenta_por_cobrar_id) throw new CobroError("Falta la cuenta por cobrar.");
 
   const cq = await sb
     .from("cuentas_por_cobrar")
-    .select("id, cliente_id, venta_id, total, saldo, estado")
+    .select("id, cliente_id, venta_id, total, saldo, estado, fecha_vencimiento")
     .eq("empresa_id", empresaId)
     .eq("id", input.cuenta_por_cobrar_id)
     .maybeSingle();
@@ -62,6 +63,7 @@ export async function registrarCobro(
     total: number | string;
     saldo: number | string;
     estado: string;
+    fecha_vencimiento: string | null;
   };
 
   if (cxc.estado === "anulado") throw new CobroError("La cuenta está anulada; no admite cobros.", 409);
@@ -69,12 +71,24 @@ export async function registrarCobro(
 
   const saldoActual = round2(Number(cxc.saldo) || 0);
   const total = round2(Number(cxc.total) || 0);
-  if (monto > saldoActual + 0.001) {
-    throw new CobroError(`El monto (${monto}) supera el saldo pendiente (${saldoActual}).`);
-  }
 
   const fechaPago =
     typeof input.fecha_pago === "string" && input.fecha_pago.trim() ? input.fecha_pago : new Date().toISOString();
+
+  // Recargo por mora (5.000 Gs/día) desde fecha_vencimiento hasta fecha_pago.
+  const diasMora = calcularDiasMora(cxc.fecha_vencimiento, fechaPago);
+  const recargoMora = calcularRecargoMora(cxc.fecha_vencimiento, fechaPago);
+
+  // El monto recibido cubre primero el recargo; el resto se aplica al saldo.
+  if (recargoMora > 0 && monto < recargoMora - 0.001) {
+    throw new CobroError(`El monto (${monto}) no cubre el recargo por mora (${recargoMora}).`);
+  }
+  const montoASaldo = round2(monto - recargoMora);
+  if (montoASaldo > saldoActual + 0.001) {
+    throw new CobroError(
+      `El monto aplicado al saldo (${montoASaldo}) supera el saldo pendiente (${saldoActual}).`
+    );
+  }
 
   // 1) Insertar el cobro.
   const ins = await sb
@@ -86,6 +100,8 @@ export async function registrarCobro(
       venta_id: cxc.venta_id,
       fecha_pago: fechaPago,
       monto,
+      recargo_mora: recargoMora,
+      dias_mora: diasMora,
       metodo_pago: metodoValido(input.metodo_pago),
       entidad_bancaria_id: input.entidad_bancaria_id || null,
       entidad_nombre_snapshot: input.entidad_nombre_snapshot?.trim() || null,
@@ -100,8 +116,8 @@ export async function registrarCobro(
   if (ins.error) throw new CobroError(ins.error.message, 500);
   const cobroId = String((ins.data as { id: string }).id);
 
-  // 2) Recalcular saldo + estado.
-  const saldoNuevo = round2(saldoActual - monto);
+  // 2) Recalcular saldo + estado. El recargo NO reduce el saldo.
+  const saldoNuevo = round2(saldoActual - montoASaldo);
   const estadoNuevo = saldoNuevo <= 0.001 ? "pagado" : saldoNuevo < total ? "parcial" : "pendiente";
   const upd = await sb
     .from("cuentas_por_cobrar")
@@ -116,5 +132,11 @@ export async function registrarCobro(
     throw new CobroError(upd.error.message, 500);
   }
 
-  return { cobro_id: cobroId, saldo_nuevo: saldoNuevo < 0 ? 0 : saldoNuevo, estado: estadoNuevo };
+  return {
+    cobro_id: cobroId,
+    saldo_nuevo: saldoNuevo < 0 ? 0 : saldoNuevo,
+    estado: estadoNuevo,
+    recargo_mora: recargoMora,
+    dias_mora: diasMora,
+  };
 }
