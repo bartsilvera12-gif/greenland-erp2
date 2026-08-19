@@ -149,6 +149,7 @@ export async function GET(request: NextRequest, ctxP: { params: Promise<{ id: st
   h2 { font-family: 'Bricolage Grotesque',sans-serif; font-weight: 700; font-size: 13px; margin: 26px 0 12px; padding-top: 14px; padding-bottom: 6px; border-top: 2px solid #1aa056; border-bottom: 1px solid #e6ede8; letter-spacing: .03em; text-transform: uppercase; color: #0d5e37; }
   h2:first-of-type { margin-top: 8px; }
   .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 18px 28px; }
+  .cliente-row { display: grid; grid-template-columns: 2fr 1fr; gap: 28px; align-items: start; }
   .field { font-size: 12px; }
   .field .lbl { font-size: 10px; color: #7c8a82; text-transform: uppercase; letter-spacing: .04em; font-weight: 600; }
   .field .val { font-size: 12.5px; font-weight: 500; margin-top: 1px; }
@@ -189,18 +190,24 @@ export async function GET(request: NextRequest, ctxP: { params: Promise<{ id: st
       </div>
     </div>
     <div class="doc-meta">
-      <div class="tag">${esc(venta.tipo_venta)}</div>
       <div class="num">${esc(venta.numero_control)}</div>
       <div class="date">${esc(fmtLargo(venta.created_at))}</div>
     </div>
   </header>
 
   <h2>Datos del cliente</h2>
-  <div class="grid-2">
+  <div class="cliente-row">
     <div class="field"><div class="lbl">Razón social / Nombre</div><div class="val">${esc(cliente.nombre)}</div></div>
     <div class="field"><div class="lbl">RUC / Documento</div><div class="val">${esc(cliente.ruc || cliente.documento || "—")}</div></div>
+  </div>
+  ${(cliente.telefono || cliente.email) ? `
+  <div class="grid-2" style="margin-top: 14px;">
     ${cliente.telefono ? `<div class="field"><div class="lbl">Teléfono</div><div class="val">${esc(cliente.telefono)}</div></div>` : ""}
     ${cliente.email ? `<div class="field"><div class="lbl">Email</div><div class="val">${esc(cliente.email)}</div></div>` : ""}
+  </div>` : ""}
+
+  <div class="grid-2" style="margin-top: 14px;">
+    <div class="field"><div class="lbl">Tipo de transacción</div><div class="val">${esc(venta.tipo_venta === "CREDITO" ? "Crédito" : "Contado")}</div></div>
   </div>
 
   ${propiedad ? `

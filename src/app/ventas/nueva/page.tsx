@@ -59,7 +59,7 @@ function SegmentedControl<T extends string>({
   value, options, onChange,
 }: { value: T; options: { value: T; label: string }[]; onChange: (v: T) => void }) {
   return (
-    <div className="flex border border-slate-200 rounded-lg overflow-hidden">
+    <div className="flex divide-x divide-slate-200 border border-slate-200 rounded-lg overflow-hidden">
       {options.map((opt) => (
         <button
           key={opt.value}
@@ -452,12 +452,15 @@ export default function NuevaVentaPage() {
               <div>
                 <label className={labelClass}>Cantidad de cuotas</label>
                 <input
-                  type="number"
-                  min={1}
-                  max={120}
+                  type="text"
+                  inputMode="numeric"
                   className={inputClass}
-                  value={cuotasCantidad}
-                  onChange={(e) => setCuotasCantidad(Math.max(1, Number(e.target.value) || 1))}
+                  value={cuotasCantidad === 0 ? "" : String(cuotasCantidad)}
+                  onChange={(e) => {
+                    const raw = e.target.value.replace(/\D/g, "");
+                    setCuotasCantidad(raw === "" ? 0 : Math.min(120, Number(raw)));
+                  }}
+                  onBlur={() => { if (cuotasCantidad < 1) setCuotasCantidad(1); }}
                 />
               </div>
               <div>
@@ -486,11 +489,15 @@ export default function NuevaVentaPage() {
               <div>
                 <label className={labelClass}>Cada (días)</label>
                 <input
-                  type="number"
-                  min={1}
+                  type="text"
+                  inputMode="numeric"
                   className={inputClass}
-                  value={intervaloDias}
-                  onChange={(e) => setIntervaloDias(Math.max(1, Number(e.target.value) || 30))}
+                  value={intervaloDias === 0 ? "" : String(intervaloDias)}
+                  onChange={(e) => {
+                    const raw = e.target.value.replace(/\D/g, "");
+                    setIntervaloDias(raw === "" ? 0 : Number(raw));
+                  }}
+                  onBlur={() => { if (intervaloDias < 1) setIntervaloDias(30); }}
                 />
               </div>
             </div>
