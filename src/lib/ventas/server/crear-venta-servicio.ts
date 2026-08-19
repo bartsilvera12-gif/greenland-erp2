@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 export interface ServicioLine {
   descripcion: string;
   monto: number;
+  tipo_iva: "EXENTA" | "5%" | "10%";
 }
 
 export interface CrearVentaServicioBody {
@@ -34,7 +35,7 @@ function addDaysISO(iso: string, days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-function asServicios(raw: unknown): ServicioLine[] {
+function asServicios(raw: unknown, defaultIva: "EXENTA" | "5%" | "10%"): ServicioLine[] {
   if (!Array.isArray(raw)) return [];
   return raw
     .map((r) => {
@@ -43,7 +44,10 @@ function asServicios(raw: unknown): ServicioLine[] {
       const descripcion = String(o.descripcion ?? "").trim();
       const monto = Number(o.monto);
       if (!descripcion || !Number.isFinite(monto) || monto <= 0) return null;
-      return { descripcion, monto } satisfies ServicioLine;
+      const tv = o.tipo_iva;
+      const tipo_iva: "EXENTA" | "5%" | "10%" =
+        tv === "EXENTA" || tv === "5%" || tv === "10%" ? tv : defaultIva;
+      return { descripcion, monto, tipo_iva } satisfies ServicioLine;
     })
     .filter((x): x is ServicioLine => x !== null);
 }
@@ -79,7 +83,7 @@ export async function crearVentaServicio(
   if (!razonSocial) throw new VentaServicioError("La razón social del cliente es obligatoria");
   const moneda = isMoneda(body.moneda) ? body.moneda : "GS";
   const tipoIva = isTipoIva(body.tipo_iva) ? body.tipo_iva : "10%";
-  const servicios = asServicios(body.servicios);
+  const servicios = asServicios(body.servicios, tipoIva);
   if (!servicios.length) throw new VentaServicioError("Cargá al menos un servicio");
   const tipoVenta = isTipoVenta(body.tipo_venta) ? body.tipo_venta : "CONTADO";
 

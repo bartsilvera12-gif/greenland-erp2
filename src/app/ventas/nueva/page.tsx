@@ -12,6 +12,7 @@ type TipoVenta = "CONTADO" | "CREDITO";
 interface Servicio {
   descripcion: string;
   monto: number;
+  tipo_iva: TipoIva;
 }
 
 interface ClienteOpt {
@@ -121,7 +122,7 @@ function NuevaVentaPage() {
   const [documento, setDocumento] = useState("");
   const [moneda, setMoneda] = useState<Moneda>("GS");
   const [tipoIva, setTipoIva] = useState<TipoIva>("10%");
-  const [servicios, setServicios] = useState<Servicio[]>([{ descripcion: "", monto: 0 }]);
+  const [servicios, setServicios] = useState<Servicio[]>([{ descripcion: "", monto: 0, tipo_iva: "10%" }]);
   const [tipoVenta, setTipoVenta] = useState<TipoVenta>("CONTADO");
   const [cuotasCantidad, setCuotasCantidad] = useState<number>(12);
   const [cuotaMonto, setCuotaMonto] = useState<number | "">("");
@@ -175,14 +176,16 @@ function NuevaVentaPage() {
         setRuc(v.cliente_ruc ?? "");
         setDocumento(v.cliente_documento ?? "");
         setMoneda(v.moneda === "USD" ? "USD" : "GS");
-        setTipoIva((v.tipo_iva === "EXENTA" || v.tipo_iva === "5%" || v.tipo_iva === "10%") ? v.tipo_iva : "10%");
+        const defIva: TipoIva = (v.tipo_iva === "EXENTA" || v.tipo_iva === "5%" || v.tipo_iva === "10%") ? v.tipo_iva : "10%";
+        setTipoIva(defIva);
         if (Array.isArray(v.servicios) && v.servicios.length > 0) {
-          setServicios(v.servicios.map((s: { descripcion?: string; monto?: number }) => ({
+          setServicios(v.servicios.map((s: { descripcion?: string; monto?: number; tipo_iva?: string }) => ({
             descripcion: String(s.descripcion ?? ""),
             monto: Number(s.monto) || 0,
+            tipo_iva: (s.tipo_iva === "EXENTA" || s.tipo_iva === "5%" || s.tipo_iva === "10%") ? s.tipo_iva : defIva,
           })));
         } else if (v.total > 0) {
-          setServicios([{ descripcion: "Venta", monto: Number(v.total) || 0 }]);
+          setServicios([{ descripcion: "Venta", monto: Number(v.total) || 0, tipo_iva: defIva }]);
         }
         setTipoVenta(v.tipo_venta === "CREDITO" ? "CREDITO" : "CONTADO");
         if (v.cuotas_cantidad) setCuotasCantidad(Number(v.cuotas_cantidad));
@@ -205,7 +208,7 @@ function NuevaVentaPage() {
     const p = propiedades.find((x) => x.id === id);
     if (!p) return;
     // Pre-completa el primer servicio con titulo + precio
-    setServicios([{ descripcion: p.titulo + (p.codigo ? ` (${p.codigo})` : ""), monto: p.precio || 0 }]);
+    setServicios([{ descripcion: p.titulo + (p.codigo ? ` (${p.codigo})` : ""), monto: p.precio || 0, tipo_iva: tipoIva }]);
     // Modalidad: si la propiedad esta en Credito y tiene cuotas, precarga
     const mod = String(p.modalidad || "").toLowerCase();
     if (mod === "credito" && p.cuotas_cantidad) {
@@ -230,17 +233,32 @@ function NuevaVentaPage() {
     }
   }
 
-  const { subtotal, montoIva, total } = useMemo(() => {
-    const sub = servicios.reduce((acc, s) => acc + (Number(s.monto) || 0), 0);
-    const iva = sub * ivaRate(tipoIva);
-    return { subtotal: sub, montoIva: iva, total: sub };
-  }, [servicios, tipoIva]);
+  // Cada línea trae su propio IVA. Los montos ingresados YA incluyen el IVA,
+  // así que el "IVA de la línea" se despeja del monto: iva = monto * r / (1 + r).
+  const { subtotal, montoIva, total, ivaPorFranja } = useMemo(() => {
+    let sub = 0;
+    const franjas: Record<TipoIva, { base: number; iva: number }> = {
+      EXENTA: { base: 0, iva: 0 },
+      "5%":   { base: 0, iva: 0 },
+      "10%":  { base: 0, iva: 0 },
+    };
+    for (const s of servicios) {
+      const m = Number(s.monto) || 0;
+      sub += m;
+      const r = ivaRate(s.tipo_iva);
+      const iva = r > 0 ? (m * r) / (1 + r) : 0;
+      franjas[s.tipo_iva].base += m - iva;
+      franjas[s.tipo_iva].iva  += iva;
+    }
+    const ivaTotal = franjas["5%"].iva + franjas["10%"].iva;
+    return { subtotal: sub, montoIva: ivaTotal, total: sub, ivaPorFranja: franjas };
+  }, [servicios]);
 
   function updateServicio(i: number, patch: Partial<Servicio>) {
     setServicios((arr) => arr.map((s, idx) => (idx === i ? { ...s, ...patch } : s)));
   }
   function addServicio() {
-    setServicios((arr) => [...arr, { descripcion: "", monto: 0 }]);
+    setServicios((arr) => [...arr, { descripcion: "", monto: 0, tipo_iva: tipoIva }]);
   }
   function removeServicio(i: number) {
     setServicios((arr) => (arr.length > 1 ? arr.filter((_, idx) => idx !== i) : arr));
@@ -251,7 +269,7 @@ function NuevaVentaPage() {
     setErr(null);
     if (!razonSocial.trim()) { setErr("Ingresá la razón social del cliente."); return; }
     const valid = servicios
-      .map((s) => ({ descripcion: s.descripcion.trim(), monto: Number(s.monto) || 0 }))
+      .map((s) => ({ descripcion: s.descripcion.trim(), monto: Number(s.monto) || 0, tipo_iva: s.tipo_iva }))
       .filter((s) => s.descripcion && s.monto > 0);
     if (!valid.length) { setErr("Cargá al menos una línea con descripción y monto > 0."); return; }
     if (tipoVenta === "CREDITO" && cuotasCantidad < 1) { setErr("Cantidad de cuotas inválida"); return; }
@@ -345,8 +363,8 @@ function NuevaVentaPage() {
         </div>
 
         <div>
-          <GroupHeader>Tipo de IVA</GroupHeader>
-          <p className="mt-1 text-[11px] text-slate-400">El IVA está incluido en el monto cargado.</p>
+          <GroupHeader>IVA por defecto para nuevas líneas</GroupHeader>
+          <p className="mt-1 text-[11px] text-slate-400">Cada línea puede tener su propio IVA. Este es el que se aplica al agregar una línea nueva.</p>
           <div className="mt-2">
             <SegmentedControl<TipoIva>
               value={tipoIva}
@@ -450,7 +468,7 @@ function NuevaVentaPage() {
           </div>
           <div className="space-y-3">
             {servicios.map((s, i) => (
-              <div key={i} className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_200px_auto] sm:items-end">
+              <div key={i} className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_160px_120px_auto] sm:items-end">
                 <div>
                   <label className={labelClass}>Descripción</label>
                   <input
@@ -469,6 +487,18 @@ function NuevaVentaPage() {
                     onChange={(e) => updateServicio(i, { monto: parseMonto(e.target.value) })}
                     placeholder="0"
                   />
+                </div>
+                <div>
+                  <label className={labelClass}>IVA</label>
+                  <select
+                    className={inputClass}
+                    value={s.tipo_iva}
+                    onChange={(e) => updateServicio(i, { tipo_iva: e.target.value as TipoIva })}
+                  >
+                    <option value="EXENTA">Exenta</option>
+                    <option value="5%">5%</option>
+                    <option value="10%">10%</option>
+                  </select>
                 </div>
                 <button
                   type="button"
@@ -489,18 +519,19 @@ function NuevaVentaPage() {
         <div>
           <GroupHeader>Totales</GroupHeader>
           <p className="mt-1 text-[11px] text-slate-400">
-            El total es igual al monto cargado — el IVA mostrado es informativo y ya está incluido.
+            Los montos ya incluyen IVA — el desglose por franja es informativo.
           </p>
-          <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <Total label="Subtotal (con IVA)" value={subtotal} moneda={moneda} />
-            <Total
-              label={tipoIva === "EXENTA" ? "IVA (no aplica)" : `IVA ${tipoIva} incluido`}
-              value={montoIva}
-              moneda={moneda}
-              muted={tipoIva === "EXENTA"}
-            />
+          <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <Total label="Exenta" value={ivaPorFranja.EXENTA.base} moneda={moneda} muted={ivaPorFranja.EXENTA.base === 0} />
+            <Total label="IVA 5% incluido" value={ivaPorFranja["5%"].iva} moneda={moneda} muted={ivaPorFranja["5%"].iva === 0} />
+            <Total label="IVA 10% incluido" value={ivaPorFranja["10%"].iva} moneda={moneda} muted={ivaPorFranja["10%"].iva === 0} />
             <Total label="Total a cobrar" value={total} moneda={moneda} highlight />
           </div>
+          {montoIva > 0 && (
+            <p className="mt-2 text-[11px] text-slate-500">
+              Subtotal (con IVA): {fmtMonto(subtotal, moneda)} · IVA total incluido: {fmtMonto(montoIva, moneda)}
+            </p>
+          )}
         </div>
 
         <div className="h-px bg-slate-100" />
