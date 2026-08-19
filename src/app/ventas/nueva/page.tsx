@@ -43,7 +43,7 @@ function fmtMonto(v: number, m: Moneda): string {
   return `${p} ${Math.round(v).toLocaleString("es-PY")}`;
 }
 function parseMonto(v: string): number {
-  const n = Number(String(v).replace(/[^\d.-]/g, ""));
+  const n = Number(String(v).replace(/\./g, "").replace(/[^\d-]/g, ""));
   return Number.isFinite(n) ? n : 0;
 }
 function fmtThousand(v: number | ""): string {
