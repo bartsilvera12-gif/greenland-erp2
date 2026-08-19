@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { fetchWithSupabaseSession } from "@/lib/api/fetch-with-supabase-session";
 import EdgeScrollArea from "@/components/ui/EdgeScrollArea";
 import { FancySelect } from "@/components/ui/FancySelect";
 import MobileFab from "@/components/ui/MobileFab";
@@ -149,6 +150,26 @@ export default function VentasPage() {
   const [filtroTipo, setFiltroTipo] = useState<TipoVenta | "">("");
   const [filtroIva,  setFiltroIva]  = useState<TipoIvaVenta | "">("");
   const [cargandoLista, setCargandoLista] = useState(true);
+  const [anulandoId, setAnulandoId] = useState<string | null>(null);
+
+  async function anularVenta(v: Venta) {
+    if (!window.confirm(`¿Anular la venta ${v.numero_control}? Se anulará la cuenta por cobrar asociada. Los cobros ya registrados no se tocan.`)) return;
+    setAnulandoId(v.id);
+    try {
+      const res = await fetchWithSupabaseSession(`/api/ventas/${v.id}/anular`, { method: "POST" });
+      const j = await res.json();
+      if (!res.ok || j?.success === false) {
+        alert(j?.error ?? "No se pudo anular la venta.");
+        return;
+      }
+      const data = await getVentas();
+      setTodas([...data].sort((a, b) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime()));
+    } catch {
+      alert("Error de red al anular la venta.");
+    } finally {
+      setAnulandoId(null);
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -416,6 +437,15 @@ export default function VentasPage() {
                               Nota de remisión
                             </a>
                           )}
+                          <button
+                            type="button"
+                            onClick={() => anularVenta(v)}
+                            disabled={anulandoId === v.id}
+                            className="inline-flex items-center justify-center rounded-md border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-medium text-rose-700 hover:bg-rose-100 transition-colors disabled:opacity-50"
+                            title="Anular esta venta (soft-delete)"
+                          >
+                            {anulandoId === v.id ? "Anulando…" : "Anular"}
+                          </button>
                         </div>
                       </td>
                     </tr>

@@ -5,9 +5,9 @@ Integración para **Bancard / Red Infonet Cobranzas** cumpliendo la especificaci
 
 - **Razón social:** Green Land SRL
 - **RUC:** 80140360-0
-- **Producto:** Pago de cuotas de venta de propiedades inmobiliarias
+- **Productos a integrar:** Cuotas de venta de propiedades, pago de limpieza, expensas
 - **Moneda:** Solo PYG (ISO 4217) — Green Land no acepta moneda extranjera por este canal
-- **Pagos parciales:** Sí, monto mínimo Gs. 10.000
+- **Pagos parciales:** Sí, monto mínimo **Gs. 1.000.000**
 - **Base URL producción:** `https://greenland.neura.com.py`
 
 ---
