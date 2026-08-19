@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ImagePlus } from "lucide-react";
 
 export const SERVICIOS_DISPONIBLES = [
@@ -116,6 +116,48 @@ function parseDec(v: string): number | null {
 function fmtDec(n: number | null | undefined): string {
   if (n == null || !Number.isFinite(n)) return "";
   return String(n).replace(".", ",");
+}
+
+/** Input decimal controlado por texto local: acepta coma y punto sin perder caracteres al tipear. */
+function DecimalInput({
+  value,
+  onChange,
+  className,
+  placeholder,
+}: {
+  value: number | null | undefined;
+  onChange: (n: number | null) => void;
+  className?: string;
+  placeholder?: string;
+}) {
+  const [text, setText] = useState<string>(() => fmtDec(value));
+  const focusedRef = useRef(false);
+  // Si cambia el valor externo mientras el input NO está enfocado, sincronizamos el texto.
+  useEffect(() => {
+    if (!focusedRef.current) setText(fmtDec(value));
+  }, [value]);
+  return (
+    <input
+      type="text"
+      inputMode="decimal"
+      className={className}
+      placeholder={placeholder}
+      value={text}
+      onFocus={() => { focusedRef.current = true; }}
+      onBlur={() => {
+        focusedRef.current = false;
+        // Normalizamos el display al valor parseado (por si quedó algo como "12,").
+        setText(fmtDec(value));
+      }}
+      onChange={(e) => {
+        const raw = e.target.value;
+        // Permitimos dígitos, coma, punto, signo — nada más.
+        const clean = raw.replace(/[^\d,.-]/g, "");
+        setText(clean);
+        onChange(parseDec(clean));
+      }}
+    />
+  );
 }
 
 /** Formatea un número con separadores de miles es-PY. Devuelve "" si null. */
@@ -379,24 +421,20 @@ export default function PropiedadForm({
           </div>
           <div>
             <label className={labelClass}>Superficie (m²)</label>
-            <input
-              type="text"
-              inputMode="decimal"
+            <DecimalInput
               className={inputClass}
               placeholder="Ej. 384,38"
-              value={fmtDec(values.superficie_m2)}
-              onChange={(e) => up("superficie_m2", parseDec(e.target.value))}
+              value={values.superficie_m2}
+              onChange={(n) => up("superficie_m2", n)}
             />
           </div>
           <div>
             <label className={labelClass}>Terreno (m²)</label>
-            <input
-              type="text"
-              inputMode="decimal"
+            <DecimalInput
               className={inputClass}
               placeholder="Ej. 384,38"
-              value={fmtDec(values.terreno_m2)}
-              onChange={(e) => up("terreno_m2", parseDec(e.target.value))}
+              value={values.terreno_m2}
+              onChange={(n) => up("terreno_m2", n)}
             />
           </div>
         </div>
@@ -577,13 +615,11 @@ export default function PropiedadForm({
                 <div className="grid grid-cols-3 gap-2">
                   <div>
                     <label className="block text-[10px] font-medium text-slate-500 mb-0.5">Metros</label>
-                    <input
-                      type="text"
-                      inputMode="decimal"
+                    <DecimalInput
                       className={inputClass}
                       placeholder="Ej. 12,50"
-                      value={fmtDec(m.m)}
-                      onChange={(e) => upMedida(dir, { m: parseDec(e.target.value) })}
+                      value={m.m}
+                      onChange={(n) => upMedida(dir, { m: n })}
                     />
                   </div>
                   <div>
