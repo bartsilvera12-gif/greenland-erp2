@@ -47,7 +47,7 @@ export async function GET(request: NextRequest, ctxP: { params: Promise<{ id: st
   // delete posterior del lote del catálogo)
   const { data: ventaRaw, error: errV } = await supabase
     .from("ventas")
-    .select("id, numero_control, tipo_venta, total, moneda, cliente_id, propiedad_id, created_at, propiedad_titulo_snapshot, propiedad_codigo_snapshot, propiedad_ciudad_snapshot, propiedad_barrio_snapshot, propiedad_finca_snapshot, propiedad_padron_snapshot, propiedad_cuenta_catastral_snapshot, propiedad_terreno_m2_snapshot")
+    .select("id, numero_control, tipo_venta, total, moneda, cliente_id, propiedad_id, created_at, payload_snapshot, propiedad_titulo_snapshot, propiedad_codigo_snapshot, propiedad_ciudad_snapshot, propiedad_barrio_snapshot, propiedad_finca_snapshot, propiedad_padron_snapshot, propiedad_cuenta_catastral_snapshot, propiedad_terreno_m2_snapshot")
     .eq("empresa_id", auth.empresa_id)
     .eq("id", id)
     .maybeSingle();
@@ -55,12 +55,33 @@ export async function GET(request: NextRequest, ctxP: { params: Promise<{ id: st
   const venta = ventaRaw as {
     id: string; numero_control: string; tipo_venta: string; total: number | string; moneda: string;
     cliente_id: string | null; propiedad_id: string | null; created_at: string;
+    payload_snapshot: Record<string, unknown> | null;
     propiedad_titulo_snapshot: string | null; propiedad_codigo_snapshot: string | null;
     propiedad_ciudad_snapshot: string | null; propiedad_barrio_snapshot: string | null;
     propiedad_finca_snapshot: string | null; propiedad_padron_snapshot: string | null;
     propiedad_cuenta_catastral_snapshot: string | null;
     propiedad_terreno_m2_snapshot: number | string | null;
   };
+
+  // Servicios + desglose de IVA (payload_snapshot). Ventas viejas no tienen snapshot → fallback simple.
+  type Servicio = { descripcion: string; monto: number; tipo_iva: "EXENTA" | "5%" | "10%" };
+  const snap = (venta.payload_snapshot ?? null) as Record<string, unknown> | null;
+  const snapIvaTop = (snap?.tipo_iva === "EXENTA" || snap?.tipo_iva === "5%" || snap?.tipo_iva === "10%") ? snap.tipo_iva : null;
+  const servicios: Servicio[] = Array.isArray(snap?.servicios)
+    ? (snap.servicios as Array<Record<string, unknown>>).map((s) => {
+        const tv = s.tipo_iva;
+        const tipo_iva: Servicio["tipo_iva"] = (tv === "EXENTA" || tv === "5%" || tv === "10%") ? tv : (snapIvaTop ?? "10%");
+        return { descripcion: String(s.descripcion ?? ""), monto: Number(s.monto) || 0, tipo_iva };
+      }).filter((s) => s.monto > 0)
+    : [];
+  const franjas = { EXENTA: { base: 0, iva: 0 }, "5%": { base: 0, iva: 0 }, "10%": { base: 0, iva: 0 } } as Record<Servicio["tipo_iva"], { base: number; iva: number }>;
+  for (const s of servicios) {
+    const r = s.tipo_iva === "5%" ? 0.05 : s.tipo_iva === "10%" ? 0.10 : 0;
+    const iva = r > 0 ? (s.monto * r) / (1 + r) : 0;
+    franjas[s.tipo_iva].base += s.monto - iva;
+    franjas[s.tipo_iva].iva  += iva;
+  }
+  const ivaTotalCalc = franjas["5%"].iva + franjas["10%"].iva;
 
   // Cliente
   let cliente: { nombre: string; ruc: string | null; documento: string | null; telefono: string | null; email: string | null } = { nombre: "Cliente", ruc: null, documento: null, telefono: null, email: null };
@@ -240,20 +261,39 @@ export async function GET(request: NextRequest, ctxP: { params: Promise<{ id: st
   ` : `
     <h2>Detalle</h2>
     <table>
-      <thead><tr><th>Concepto</th><th>Vencimiento</th><th class="num">Monto</th></tr></thead>
+      <thead><tr><th>Concepto</th><th style="width:90px">IVA</th><th class="num" style="width:140px">Monto</th></tr></thead>
       <tbody>
-        ${(cuotas[0] ? [`<tr>
-          <td>${esc(propiedad ? propiedad.titulo : "Venta " + venta.numero_control)}</td>
-          <td>${esc(fmt(cuotas[0].fecha_vencimiento))}</td>
-          <td class="num">${esc(gs(cuotas[0].total, moneda))}</td>
-        </tr>`] : [`<tr>
-          <td>${esc(propiedad ? propiedad.titulo : "Venta " + venta.numero_control)}</td>
-          <td>—</td>
-          <td class="num">${esc(gs(totalNum, moneda))}</td>
-        </tr>`]).join("")}
+        ${servicios.length > 0
+          ? servicios.map((s) => `<tr>
+              <td>${esc(s.descripcion)}</td>
+              <td>${esc(s.tipo_iva === "EXENTA" ? "Exenta" : s.tipo_iva)}</td>
+              <td class="num">${esc(gs(s.monto, moneda))}</td>
+            </tr>`).join("")
+          : `<tr>
+              <td>${esc(propiedad ? propiedad.titulo : "Venta " + venta.numero_control)}</td>
+              <td>—</td>
+              <td class="num">${esc(gs(totalNum, moneda))}</td>
+            </tr>`}
       </tbody>
     </table>
   `}
+
+  ${servicios.length > 0 ? `
+    <h2>Desglose de IVA</h2>
+    <table>
+      <thead><tr><th>Franja</th><th class="num" style="width:180px">Gravado (sin IVA)</th><th class="num" style="width:180px">IVA incluido</th></tr></thead>
+      <tbody>
+        <tr><td>Exenta</td><td class="num">${esc(gs(franjas.EXENTA.base, moneda))}</td><td class="num">—</td></tr>
+        <tr><td>5%</td><td class="num">${esc(gs(franjas["5%"].base, moneda))}</td><td class="num">${esc(gs(franjas["5%"].iva, moneda))}</td></tr>
+        <tr><td>10%</td><td class="num">${esc(gs(franjas["10%"].base, moneda))}</td><td class="num">${esc(gs(franjas["10%"].iva, moneda))}</td></tr>
+        <tr style="border-top:2px solid #eef3ef;font-weight:700">
+          <td>IVA total incluido</td>
+          <td class="num">—</td>
+          <td class="num">${esc(gs(ivaTotalCalc, moneda))}</td>
+        </tr>
+      </tbody>
+    </table>
+  ` : ""}
 
   <div class="total-box">
     <div class="lbl">Total</div>
