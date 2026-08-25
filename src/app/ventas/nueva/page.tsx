@@ -560,7 +560,7 @@ function NuevaVentaPage() {
                   value={cuotasCantidad === 0 ? "" : String(cuotasCantidad)}
                   onChange={(e) => {
                     const raw = e.target.value.replace(/\D/g, "");
-                    setCuotasCantidad(raw === "" ? 0 : Math.min(120, Number(raw)));
+                    setCuotasCantidad(raw === "" ? 0 : Math.min(240, Number(raw)));
                   }}
                   onBlur={() => { if (cuotasCantidad < 1) setCuotasCantidad(1); }}
                 />
