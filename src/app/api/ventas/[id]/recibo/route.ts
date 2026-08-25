@@ -244,7 +244,16 @@ export async function GET(request: NextRequest, ctxP: { params: Promise<{ id: st
     </div>
   ` : ""}
 
-  ${cuotas.length > 1 ? `
+  ${cuotas.length > 1 ? (() => {
+    const totalPlan = cuotas.reduce((s, c) => s + (Number(c.total) || 0), 0);
+    const saldoPlan = cuotas.reduce((s, c) => s + (Number(c.saldo) || 0), 0);
+    const pagadoPlan = Math.max(0, totalPlan - saldoPlan);
+    const pagadas = cuotas.filter((c) => (Number(c.saldo) || 0) <= 0).length;
+    const pendientes = cuotas.length - pagadas;
+    const DETALLE_UMBRAL = 24;
+
+    if (cuotas.length <= DETALLE_UMBRAL) {
+      return `
     <h2>Plan de cuotas (${cuotas.length})</h2>
     <table>
       <thead><tr><th style="width:80px">Cuota</th><th>Número</th><th>Vencimiento</th><th class="num">Monto</th><th>Estado</th></tr></thead>
@@ -257,8 +266,63 @@ export async function GET(request: NextRequest, ctxP: { params: Promise<{ id: st
           <td>${esc(c.estado)}</td>
         </tr>`).join("")}
       </tbody>
+    </table>`;
+    }
+
+    // Plan largo: resumen + por año + próximas 12 pendientes
+    const porAnio = new Map<string, { cant: number; total: number; saldo: number }>();
+    for (const c of cuotas) {
+      const y = (c.fecha_vencimiento ?? "").slice(0, 4) || "—";
+      const acc = porAnio.get(y) ?? { cant: 0, total: 0, saldo: 0 };
+      acc.cant += 1;
+      acc.total += Number(c.total) || 0;
+      acc.saldo += Number(c.saldo) || 0;
+      porAnio.set(y, acc);
+    }
+    const anios = Array.from(porAnio.entries()).sort(([a], [b]) => a.localeCompare(b));
+
+    const proximas = cuotas
+      .filter((c) => (Number(c.saldo) || 0) > 0)
+      .slice(0, 12);
+
+    return `
+    <h2>Plan de cuotas (${cuotas.length})</h2>
+    <div class="grid-2" style="margin-bottom:14px">
+      <div class="field"><div class="lbl">Cuotas pagadas</div><div class="val">${pagadas} de ${cuotas.length}</div></div>
+      <div class="field"><div class="lbl">Cuotas pendientes</div><div class="val">${pendientes}</div></div>
+      <div class="field"><div class="lbl">Total pagado</div><div class="val">${esc(gs(pagadoPlan, moneda))}</div></div>
+      <div class="field"><div class="lbl">Saldo pendiente</div><div class="val">${esc(gs(saldoPlan, moneda))}</div></div>
+    </div>
+
+    <h3 style="font-family:'Bricolage Grotesque',sans-serif;font-size:12px;margin:14px 0 6px;color:#0d5e37;text-transform:uppercase;letter-spacing:.04em">Resumen por año</h3>
+    <table>
+      <thead><tr><th>Año</th><th class="num" style="width:90px">Cuotas</th><th class="num">Total</th><th class="num">Saldo</th></tr></thead>
+      <tbody>
+        ${anios.map(([y, a]) => `<tr>
+          <td>${esc(y)}</td>
+          <td class="num">${a.cant}</td>
+          <td class="num">${esc(gs(a.total, moneda))}</td>
+          <td class="num">${esc(gs(a.saldo, moneda))}</td>
+        </tr>`).join("")}
+      </tbody>
     </table>
-  ` : `
+
+    ${proximas.length > 0 ? `
+    <h3 style="font-family:'Bricolage Grotesque',sans-serif;font-size:12px;margin:18px 0 6px;color:#0d5e37;text-transform:uppercase;letter-spacing:.04em">Próximas ${proximas.length} cuotas pendientes</h3>
+    <table>
+      <thead><tr><th style="width:80px">Cuota</th><th>Número</th><th>Vencimiento</th><th class="num">Monto</th><th class="num">Saldo</th></tr></thead>
+      <tbody>
+        ${proximas.map((c) => `<tr>
+          <td>${esc(c.numero_cuota ?? "—")} / ${esc(c.total_cuotas ?? "—")}</td>
+          <td>${esc(c.numero_venta || "—")}</td>
+          <td>${esc(fmt(c.fecha_vencimiento))}</td>
+          <td class="num">${esc(gs(c.total, moneda))}</td>
+          <td class="num">${esc(gs(c.saldo, moneda))}</td>
+        </tr>`).join("")}
+      </tbody>
+    </table>
+    <p style="font-size:10.5px;color:#7c8a82;margin-top:6px">Se muestran las próximas cuotas por vencer. El detalle completo de las ${cuotas.length} cuotas está disponible en el portal de pagos y en el sistema.</p>` : ""}`;
+  })() : `
     <h2>Detalle</h2>
     <table>
       <thead><tr><th>Concepto</th><th style="width:90px">IVA</th><th class="num" style="width:140px">Monto</th></tr></thead>
