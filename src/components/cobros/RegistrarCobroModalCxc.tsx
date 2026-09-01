@@ -49,8 +49,10 @@ export function RegistrarCobroModalCxc({
   const [titular, setTitular] = useState("");
   const [entidadId, setEntidadId] = useState("");
   const [entidades, setEntidades] = useState<Entidad[]>([]);
+  const [fechaPago, setFechaPago] = useState<string>("");
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const hoyISO = new Date().toISOString().slice(0, 10);
   // Tras un cobro exitoso, se ofrece generar el recibo (paso opcional).
   const [cobroOk, setCobroOk] = useState<{ cobroId: string; monto: number } | null>(null);
 
@@ -65,6 +67,7 @@ export function RegistrarCobroModalCxc({
       setReferencia("");
       setTitular("");
       setEntidadId("");
+      setFechaPago(new Date().toISOString().slice(0, 10));
       setError(null);
       setCobroOk(null);
     }
@@ -103,6 +106,8 @@ export function RegistrarCobroModalCxc({
     }
     if (pideBanco && !entidadId) { setError("Seleccioná la entidad bancaria."); return; }
     if (pideBanco && !referencia.trim()) { setError("Ingresá la referencia / nº de operación."); return; }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(fechaPago)) { setError("Ingresá una fecha de pago válida."); return; }
+    if (fechaPago > hoyISO) { setError("La fecha de pago no puede ser futura."); return; }
     setGuardando(true);
     setError(null);
     try {
@@ -119,6 +124,7 @@ export function RegistrarCobroModalCxc({
           titular: pideBanco ? (titular.trim() || null) : null,
           observaciones: !pideBanco && metodo === "otro" ? (referencia.trim() || null) : null,
           entidad_nombre_snapshot: pideBanco ? entidadNombre : null,
+          fecha_pago: fechaPago || null,
         }),
       });
       const body = await res.json();
@@ -191,6 +197,17 @@ export function RegistrarCobroModalCxc({
                     ? "El recargo se cobra primero. El resto reduce el saldo de la cuota."
                     : "Si cobrás menos que el saldo, la cuenta sigue pendiente con la diferencia."}
                 </p>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Fecha del pago</label>
+                <input
+                  type="date"
+                  value={fechaPago}
+                  max={hoyISO}
+                  onChange={(e) => setFechaPago(e.target.value)}
+                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+                />
+                <p className="mt-1 text-[11px] text-slate-500">Por defecto es hoy. Podés retroceder la fecha si estás registrando un pago recibido en otra fecha.</p>
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">Método de pago</label>
