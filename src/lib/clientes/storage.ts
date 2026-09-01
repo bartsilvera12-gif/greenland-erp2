@@ -452,6 +452,10 @@ export function construirPatchActualizacionCliente(datos: ActualizarClienteInput
     const v = (datos as Record<string, unknown>).credito_primera_cuota;
     patch.credito_primera_cuota = typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null;
   }
+  if ((datos as Record<string, unknown>).credito_intervalo_dias !== undefined) {
+    const n = Number((datos as Record<string, unknown>).credito_intervalo_dias);
+    patch.credito_intervalo_dias = Number.isFinite(n) && n > 0 ? Math.trunc(n) : null;
+  }
   if (datos.moneda_preferida !== undefined) patch.moneda_preferida = datos.moneda_preferida ?? null;
   if (datos.vendedor_asignado !== undefined) patch.vendedor_asignado = datos.vendedor_asignado ?? null;
   if (datos.vendedor_usuario_id !== undefined) {

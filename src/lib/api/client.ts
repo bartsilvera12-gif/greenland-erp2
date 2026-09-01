@@ -90,6 +90,7 @@ export async function apiCreateCliente(data: {
   credito_cuotas_cantidad?: number;
   credito_monto_cuota?: number;
   credito_primera_cuota?: string;
+  credito_intervalo_dias?: number;
   moneda_preferida?: string;
   estado?: string;
   usa_nota_remision?: boolean;

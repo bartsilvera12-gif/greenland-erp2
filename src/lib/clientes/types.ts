@@ -56,6 +56,7 @@ export interface Cliente {
   credito_cuotas_cantidad?:  number | null;
   credito_monto_cuota?:      number | null;
   credito_primera_cuota?:    string | null;   // YYYY-MM-DD
+  credito_intervalo_dias?:   number | null;   // frecuencia entre cuotas (15 quincenal, 30 mensual, 60 bimestral, etc)
   moneda_preferida?:   "GS" | "USD";
   vendedor_asignado?:  string;
   /** Usuario ERP responsable comercial (FK zentra_erp.usuarios); el texto libre sigue en vendedor_asignado. */

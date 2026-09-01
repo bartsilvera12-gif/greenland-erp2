@@ -81,6 +81,7 @@ function NuevoClienteForm() {
     credito_cuotas_cantidad:  "",
     credito_monto_cuota:      "",
     credito_primera_cuota:    "",
+    credito_intervalo_dias:   "30",
     moneda_preferida:    "GS" as "GS" | "USD",
     vendedor_asignado:   "",
     vendedor_usuario_id: "",
@@ -332,6 +333,7 @@ function NuevoClienteForm() {
       credito_cuotas_cantidad: form.condicion_pago === "CREDITO" && form.credito_cuotas_cantidad ? Number(form.credito_cuotas_cantidad) : undefined,
       credito_monto_cuota: form.condicion_pago === "CREDITO" && form.credito_monto_cuota ? Number(form.credito_monto_cuota) : undefined,
       credito_primera_cuota: form.condicion_pago === "CREDITO" && form.credito_primera_cuota ? form.credito_primera_cuota : undefined,
+      credito_intervalo_dias: form.condicion_pago === "CREDITO" && form.credito_intervalo_dias ? Number(form.credito_intervalo_dias) : undefined,
       moneda_preferida: form.moneda_preferida,
       estado: form.estado,
       usa_nota_remision: form.usa_nota_remision,
@@ -885,6 +887,20 @@ function NuevoClienteForm() {
                       onChange={handleChange}
                       className={inputClass}
                     />
+                  </div>
+                  <div>
+                    <label className={labelClass}>Frecuencia entre cuotas (cada N días)</label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={365}
+                      name="credito_intervalo_dias"
+                      value={form.credito_intervalo_dias}
+                      onChange={handleChange}
+                      placeholder="30"
+                      className={inputClass}
+                    />
+                    <p className="text-[11px] text-slate-500 mt-1">Ej. 7 semanal · 15 quincenal · 30 mensual · 60 bimestral · 90 trimestral. Se pre-carga en Nueva Venta.</p>
                   </div>
                 </div>
               </div>

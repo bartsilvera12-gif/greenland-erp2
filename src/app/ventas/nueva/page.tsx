@@ -21,6 +21,11 @@ interface ClienteOpt {
   nombre_contacto: string | null;
   ruc: string | null;
   documento: string | null;
+  condicion_pago?: string | null;
+  credito_cuotas_cantidad?: number | null;
+  credito_intervalo_dias?: number | null;
+  credito_primera_cuota?: string | null;
+  credito_monto_cuota?: number | null;
 }
 
 interface PropiedadOpt {
@@ -230,6 +235,18 @@ function NuevaVentaPage() {
       setRazonSocial((c.empresa ?? c.nombre_contacto ?? "").trim());
       setRuc(c.ruc ?? "");
       setDocumento(c.documento ?? "");
+      // Pre-carga la financiación acordada con el cliente cuando corresponde.
+      if ((c.condicion_pago ?? "").toUpperCase() === "CREDITO") {
+        setTipoVenta("CREDITO");
+        if (c.credito_cuotas_cantidad && c.credito_cuotas_cantidad > 0) {
+          setCuotasCantidad(Math.min(240, c.credito_cuotas_cantidad));
+        }
+        if (c.credito_intervalo_dias && c.credito_intervalo_dias > 0) {
+          setIntervaloDias(c.credito_intervalo_dias);
+        }
+        if (c.credito_primera_cuota) setFechaPrimeraCuota(c.credito_primera_cuota);
+        if (c.credito_monto_cuota && c.credito_monto_cuota > 0) setCuotaMonto(c.credito_monto_cuota);
+      }
     }
   }
 
