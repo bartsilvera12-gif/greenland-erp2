@@ -131,7 +131,7 @@ export async function crearOReusarRecibo(
     if (!cobroId) throw new ReciboError("Falta cobro_cliente_id.");
     const cq = await sb
       .from("cobros_clientes")
-      .select("id, cliente_id, cuenta_por_cobrar_id, venta_id, monto, metodo_pago, referencia, entidad_bancaria_id, estado")
+      .select("id, cliente_id, cuenta_por_cobrar_id, venta_id, monto, metodo_pago, referencia, entidad_bancaria_id, estado, fecha_pago")
       .eq("empresa_id", empresaId)
       .eq("id", cobroId)
       .maybeSingle();
@@ -187,6 +187,7 @@ export async function crearOReusarRecibo(
       referencia: (cob.referencia as string) || null,
       concepto,
       observaciones: input.observaciones ?? null,
+      fecha: cob.fecha_pago ? String(cob.fecha_pago).slice(0, 10) : null,
     });
   }
 
@@ -208,6 +209,8 @@ type InsertData = {
   referencia: string | null;
   concepto: string | null;
   observaciones: string | null;
+  /** YYYY-MM-DD. Si viene null, la DB usa su default (hoy). */
+  fecha?: string | null;
 };
 
 async function insertarRecibo(
@@ -217,15 +220,19 @@ async function insertarRecibo(
   d: InsertData
 ): Promise<{ recibo: Record<string, unknown>; existed: boolean }> {
   const numero = await siguienteNumero(sb, empresaId);
+  // Si viene fecha (retroactiva desde el cobro) la usamos; si no, la DB pone hoy.
+  const { fecha, ...rest } = d;
+  const row: Record<string, unknown> = {
+    empresa_id: empresaId,
+    numero_recibo: numero,
+    ...rest,
+    usuario_id: usuario.id,
+    usuario_nombre: usuario.nombre,
+  };
+  if (fecha) row.fecha = fecha;
   const ins = await sb
     .from("recibos_dinero")
-    .insert({
-      empresa_id: empresaId,
-      numero_recibo: numero,
-      ...d,
-      usuario_id: usuario.id,
-      usuario_nombre: usuario.nombre,
-    })
+    .insert(row)
     .select(RECIBO_COLS)
     .single();
   if (ins.error) {

@@ -10,13 +10,13 @@
 export const EMPRESA_DOC = {
   nombre: "Green Land",
   actividad: [
-    "Venta de repuestos y accesorios para vehículos automotores",
+    "Inmobiliaria · Venta de propiedades y servicios",
   ],
-  telefono: "+595 981 129255",
+  telefono: "+595 987 126491",
   /** Dirección oculta a pedido del cliente (lista vacía → no se renderiza). */
   direccion: [] as string[],
-  /** Logo del cliente (alta calidad, sin fondo). Servido desde /public. */
-  logoUrl: "/brand/logo%20cerrajeria.png",
+  /** Logo institucional de Green Land (versión 180x100 con fondo transparente). */
+  logoUrl: "/greenland-logos/greenland-logo-180x100.png",
 };
 
 function esc(v: unknown): string {
