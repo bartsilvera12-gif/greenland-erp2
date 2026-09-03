@@ -202,6 +202,11 @@ export default function ClienteDetailPage() {
     linkedin:            "",
     valor_cliente:       "",
     condicion_pago:      "",
+    credito_medio:            "",
+    credito_cuotas_cantidad:  "",
+    credito_monto_cuota:      "",
+    credito_primera_cuota:    "",
+    credito_intervalo_dias:   "",
     moneda_preferida:      "GS" as "GS" | "USD",
     vendedor_asignado:     "",
     vendedor_usuario_id:   "",
@@ -359,6 +364,11 @@ export default function ClienteDetailPage() {
         linkedin:            c.linkedin            ?? "",
         valor_cliente:       c.valor_cliente != null ? String(c.valor_cliente) : "",
         condicion_pago:       c.condicion_pago      ?? "",
+        credito_medio:            c.credito_medio           ?? "",
+        credito_cuotas_cantidad:  c.credito_cuotas_cantidad != null ? String(c.credito_cuotas_cantidad) : "",
+        credito_monto_cuota:      c.credito_monto_cuota != null ? String(c.credito_monto_cuota) : "",
+        credito_primera_cuota:    c.credito_primera_cuota   ?? "",
+        credito_intervalo_dias:   c.credito_intervalo_dias != null ? String(c.credito_intervalo_dias) : "",
         moneda_preferida:     c.moneda_preferida    ?? "GS",
         vendedor_asignado:    c.vendedor_asignado   ?? "",
         vendedor_usuario_id:  c.vendedor_usuario_id ?? "",
@@ -641,6 +651,11 @@ export default function ClienteDetailPage() {
         linkedin:            form.linkedin.trim()            || undefined,
         valor_cliente:       parseFloat(form.valor_cliente) || undefined,
         condicion_pago:      form.condicion_pago.trim().toUpperCase()    || undefined,
+        credito_medio:            form.condicion_pago === "CREDITO" && form.credito_medio.trim() ? form.credito_medio.trim() : null,
+        credito_cuotas_cantidad:  form.condicion_pago === "CREDITO" && form.credito_cuotas_cantidad ? Number(form.credito_cuotas_cantidad) : null,
+        credito_monto_cuota:      form.condicion_pago === "CREDITO" && form.credito_monto_cuota ? Number(form.credito_monto_cuota) : null,
+        credito_primera_cuota:    form.condicion_pago === "CREDITO" && form.credito_primera_cuota ? form.credito_primera_cuota : null,
+        credito_intervalo_dias:   form.condicion_pago === "CREDITO" && form.credito_intervalo_dias ? Number(form.credito_intervalo_dias) : null,
         moneda_preferida:    form.moneda_preferida,
         vendedor_asignado:   form.vendedor_asignado.trim().toUpperCase() || undefined,
         vendedor_usuario_id: form.vendedor_usuario_id.trim() || null,
@@ -1704,6 +1719,7 @@ export default function ClienteDetailPage() {
                     >
                       <option value="">—</option>
                       <option value="CONTADO">Contado</option>
+                      <option value="CREDITO">Crédito</option>
                       <option value="15 DÍAS">15 días</option>
                       <option value="30 DÍAS">30 días</option>
                       <option value="60 DÍAS">60 días</option>
@@ -1773,6 +1789,79 @@ export default function ClienteDetailPage() {
                     </select>
                   </div>
                 </div>
+
+                {/* Campos crédito — cuando condicion_pago = CREDITO */}
+                {form.condicion_pago === "CREDITO" && (
+                  <div className="mt-6 p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-4">
+                    <SectionTitle>Financiación acordada</SectionTitle>
+                    <p className="text-xs text-slate-500 -mt-2">Detalles del crédito pactado. Se pre-cargan en Nueva Venta.</p>
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <div>
+                        <label className={labelClass}>Medio / tipo de financiación</label>
+                        <input
+                          type="text"
+                          name="credito_medio"
+                          value={form.credito_medio}
+                          onChange={handleChange}
+                          placeholder="Ej. Financiamiento propio, Cooperativa X, Banco Y, Tarjeta"
+                          className={inputClass}
+                        />
+                      </div>
+                      <div>
+                        <label className={labelClass}>Cantidad de cuotas</label>
+                        <input
+                          type="number"
+                          min={1}
+                          max={240}
+                          name="credito_cuotas_cantidad"
+                          value={form.credito_cuotas_cantidad}
+                          onChange={handleChange}
+                          placeholder="Ej. 12"
+                          className={inputClass}
+                        />
+                      </div>
+                      <div>
+                        <label className={labelClass}>Monto por cuota (opcional)</label>
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          name="credito_monto_cuota"
+                          value={form.credito_monto_cuota === "" ? "" : Number(form.credito_monto_cuota).toLocaleString("es-PY")}
+                          onChange={(e) => {
+                            const clean = e.target.value.replace(/[^\d]/g, "");
+                            setForm((p) => ({ ...p, credito_monto_cuota: clean }));
+                          }}
+                          placeholder="Ej. 1.500.000"
+                          className={inputClass}
+                        />
+                      </div>
+                      <div>
+                        <label className={labelClass}>Fecha primera cuota / vencimiento (opcional)</label>
+                        <input
+                          type="date"
+                          name="credito_primera_cuota"
+                          value={form.credito_primera_cuota}
+                          onChange={handleChange}
+                          className={inputClass}
+                        />
+                      </div>
+                      <div>
+                        <label className={labelClass}>Frecuencia entre cuotas (cada N días)</label>
+                        <input
+                          type="number"
+                          min={1}
+                          max={365}
+                          name="credito_intervalo_dias"
+                          value={form.credito_intervalo_dias}
+                          onChange={handleChange}
+                          placeholder="30"
+                          className={inputClass}
+                        />
+                        <p className="text-[11px] text-slate-500 mt-1">Ej. 7 semanal · 15 quincenal · 30 mensual · 60 bimestral · 90 trimestral.</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {/* Campos factura Contado */}
                 {form.condicion_pago === "CONTADO" && (
