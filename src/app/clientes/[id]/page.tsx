@@ -2099,6 +2099,42 @@ export default function ClienteDetailPage() {
           {/* ── ESTADO DE CUENTA ─────────────────────────────────────────── */}
           {activeTab === "estado_cuenta" && (
             <div className="space-y-4">
+              {/* Resumen general — se muestra para todos los clientes,
+                  incluidos los de CONTADO (para ver histórico pagado). */}
+              {(() => {
+                const totalFacturado = facturas.reduce((s, f) => s + (Number(f.monto) || 0), 0);
+                const totalCxc       = cxcCliente.reduce((s, c) => s + (Number(c.total) || 0), 0);
+                const saldoFacturas  = facturas.reduce((s, f) => s + (Number(f.saldo) || 0), 0);
+                const saldoCxc       = cxcCliente.reduce((s, c) => s + (Number(c.saldo) || 0), 0);
+                const totalVendido   = totalFacturado + totalCxc;
+                const saldoPendiente = saldoFacturas + saldoCxc;
+                const pagadoConsolidado = Math.max(0, totalVendido - saldoPendiente);
+                return (
+                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                    <div className="rounded-xl border border-slate-200 bg-white p-3">
+                      <div className="text-[11px] uppercase tracking-wide text-slate-400">Total facturado / vendido</div>
+                      <div className="mt-1 text-lg font-bold text-slate-800 tabular-nums">Gs. {Math.round(totalVendido).toLocaleString("es-PY")}</div>
+                    </div>
+                    <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
+                      <div className="text-[11px] uppercase tracking-wide text-emerald-600">Total pagado</div>
+                      <div className="mt-1 text-lg font-bold text-emerald-700 tabular-nums">Gs. {Math.round(pagadoConsolidado).toLocaleString("es-PY")}</div>
+                    </div>
+                    <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
+                      <div className="text-[11px] uppercase tracking-wide text-amber-600">Saldo pendiente</div>
+                      <div className="mt-1 text-lg font-bold text-amber-700 tabular-nums">Gs. {Math.round(saldoPendiente).toLocaleString("es-PY")}</div>
+                    </div>
+                    <div className="rounded-xl border border-slate-200 bg-white p-3">
+                      <div className="text-[11px] uppercase tracking-wide text-slate-400">Operaciones</div>
+                      <div className="mt-1 text-lg font-bold text-slate-800">
+                        {facturas.length} <span className="text-xs font-medium text-slate-500">facturas</span>
+                        <span className="mx-1 text-slate-300">·</span>
+                        {cxcCliente.length} <span className="text-xs font-medium text-slate-500">cuotas</span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <SectionTitle>Facturas del cliente</SectionTitle>
                 <div className="flex flex-wrap gap-2">
