@@ -29,6 +29,7 @@ import { getFacturas, getSuscripciones } from "@/lib/facturacion/storage";
 import { getMarketingTasks, createMarketingTask, updateTaskStatus } from "@/lib/marketing/storage";
 import { getUsuariosActivosEmpresa, type UsuarioEmpresa } from "@/lib/usuarios/empresa";
 import { fetchWithSupabaseSession } from "@/lib/api/fetch-with-supabase-session";
+import { RegistrarCobroModalCxc } from "@/components/cobros/RegistrarCobroModalCxc";
 import { SifenEstadoBadge } from "@/components/sifen/SifenEstadoBadge";
 import { useFacturaSifenEstados } from "@/hooks/useFacturaSifenEstados";
 import MontoInput from "@/components/ui/MontoInput";
@@ -90,6 +91,14 @@ const TABS: { id: TabId; label: string; showWhen?: (c: Cliente) => boolean }[] =
 ];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+const ESTADO_BADGE_CXC: Record<string, string> = {
+  pendiente: "bg-amber-100 text-amber-700",
+  parcial:   "bg-sky-100 text-sky-700",
+  pagado:    "bg-emerald-100 text-emerald-700",
+  vencido:   "bg-red-100 text-red-700",
+  anulado:   "bg-slate-100 text-slate-500",
+};
 
 function formatFecha(iso: string) {
   try {
@@ -266,6 +275,16 @@ export default function ClienteDetailPage() {
 
   // Estado de cuenta
   const [facturas, setFacturas] = useState<Factura[]>([]);
+  // Cuentas por cobrar del cliente (las mismas que aparecen en /pagos).
+  const [cxcCliente, setCxcCliente] = useState<Array<{
+    id: string; numero_venta: string | null; fecha_emision: string | null; fecha_vencimiento: string | null;
+    moneda: string; total: number; saldo: number; estado: string; vencida: boolean;
+  }>>([]);
+  const [cobrosCliente, setCobrosCliente] = useState<Array<{
+    id: string; fecha_pago: string | null; monto: number; metodo_pago: string; referencia: string | null;
+  }>>([]);
+  const [cargandoCxc, setCargandoCxc] = useState(false);
+  const [cobrandoCxc, setCobrandoCxc] = useState<{ id: string; numero_venta: string | null; saldo: number; moneda: string; cliente_nombre: string } | null>(null);
   const [modalPago, setModalPago] = useState(false);
   const [facturaPago, setFacturaPago] = useState<Factura | null>(null);
   const [formPago, setFormPago] = useState({ factura_id: "" as string, monto: "", fecha_pago: "", metodo_pago: "efectivo" as const, referencia: "" });
@@ -506,7 +525,33 @@ export default function ClienteDetailPage() {
       getSuscripciones(id).then(setSuscripciones);
       getPlanes().then(setPlanes);
     }
+    if (activeTab === "estado_cuenta") {
+      void cargarCxcCliente();
+    }
   }, [id, activeTab]);
+
+  const cargarCxcCliente = useCallback(async () => {
+    if (!id.trim()) return;
+    setCargandoCxc(true);
+    try {
+      const res = await fetchWithSupabaseSession(`/api/cobros/cuentas?cliente_id=${encodeURIComponent(id)}`, { cache: "no-store" });
+      const body = await res.json();
+      if (res.ok && body?.success !== false) {
+        const cuentas = (body.data?.cuentas ?? []) as typeof cxcCliente;
+        const cobros  = (body.data?.cobros ?? []) as typeof cobrosCliente;
+        setCxcCliente(cuentas);
+        setCobrosCliente(cobros);
+      } else {
+        setCxcCliente([]);
+        setCobrosCliente([]);
+      }
+    } catch {
+      setCxcCliente([]);
+      setCobrosCliente([]);
+    } finally {
+      setCargandoCxc(false);
+    }
+  }, [id]);
 
   useEffect(() => {
     if (form.condicion_pago === "MENSUAL") {
@@ -2151,6 +2196,89 @@ export default function ClienteDetailPage() {
                   </table>
                 </div>
               )}
+
+              {/* Cuentas por cobrar (ventas a crédito) — mismo dato que /pagos */}
+              <div className="pt-4">
+                <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
+                  <SectionTitle>Cuentas por cobrar</SectionTitle>
+                  <Link href={`/clientes/${id}/estado-cuenta`} className="text-xs font-medium text-[#4FAEB2] hover:underline">
+                    Ver estado de cuenta completo →
+                  </Link>
+                </div>
+                {cargandoCxc ? (
+                  <p className="text-sm text-gray-400 py-6 text-center">Cargando cuentas…</p>
+                ) : cxcCliente.length === 0 ? (
+                  <p className="text-sm text-gray-400 py-6 text-center">No tiene ventas a crédito con saldo pendiente.</p>
+                ) : (
+                  <div className="overflow-x-auto rounded-lg border border-slate-200">
+                    <table className="w-full text-sm">
+                      <thead className="bg-slate-50">
+                        <tr>
+                          {["Venta", "Emisión", "Vencimiento", "Total", "Saldo", "Estado"].map((h) => (
+                            <th key={h} className="text-left text-xs font-semibold text-slate-600 px-4 py-3">{h}</th>
+                          ))}
+                          <th className="text-right text-xs font-semibold text-slate-600 px-4 py-3">Acción</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {cxcCliente.map((c) => {
+                          const badge = ESTADO_BADGE_CXC[c.vencida && c.estado !== "pagado" ? "vencido" : c.estado] ?? ESTADO_BADGE_CXC.pendiente;
+                          const label = c.vencida && c.estado !== "pagado" ? "Vencido" : c.estado.charAt(0).toUpperCase() + c.estado.slice(1);
+                          return (
+                            <tr key={c.id} className="hover:bg-slate-50">
+                              <td className="px-4 py-3 font-mono text-slate-800">{c.numero_venta ?? "—"}</td>
+                              <td className="px-4 py-3 text-slate-600">{c.fecha_emision ? formatFecha(c.fecha_emision) : "—"}</td>
+                              <td className={`px-4 py-3 ${c.vencida ? "font-semibold text-red-600" : "text-slate-600"}`}>{c.fecha_vencimiento ? formatFecha(c.fecha_vencimiento) : "—"}</td>
+                              <td className="px-4 py-3 font-semibold text-slate-800 tabular-nums">{(c.moneda === "USD" ? "USD " : "Gs. ") + Math.round(c.total).toLocaleString("es-PY")}</td>
+                              <td className="px-4 py-3 font-semibold text-amber-700 tabular-nums">{(c.moneda === "USD" ? "USD " : "Gs. ") + Math.round(c.saldo).toLocaleString("es-PY")}</td>
+                              <td className="px-4 py-3"><span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${badge}`}>{label}</span></td>
+                              <td className="px-4 py-3 text-right">
+                                {c.saldo > 0 && c.estado !== "anulado" ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => setCobrandoCxc({ id: c.id, numero_venta: c.numero_venta, saldo: c.saldo, moneda: c.moneda, cliente_nombre: cliente?.nombre_contacto ?? cliente?.empresa ?? "Cliente" })}
+                                    className="rounded-lg bg-[#4FAEB2] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#3F8E91]"
+                                  >
+                                    Registrar pago
+                                  </button>
+                                ) : null}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              {/* Historial de cobros (últimos) */}
+              {cobrosCliente.length > 0 && (
+                <div className="pt-4">
+                  <SectionTitle>Cobros registrados</SectionTitle>
+                  <div className="overflow-x-auto rounded-lg border border-slate-200 mt-2">
+                    <table className="w-full text-sm">
+                      <thead className="bg-slate-50">
+                        <tr>
+                          {["Fecha", "Método", "Referencia", "Monto"].map((h) => (
+                            <th key={h} className="text-left text-xs font-semibold text-slate-600 px-4 py-3">{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {cobrosCliente.slice(0, 20).map((c) => (
+                          <tr key={c.id} className="hover:bg-slate-50">
+                            <td className="px-4 py-3 text-slate-600">{c.fecha_pago ? formatFecha(c.fecha_pago) : "—"}</td>
+                            <td className="px-4 py-3 text-slate-600 capitalize">{c.metodo_pago}</td>
+                            <td className="px-4 py-3 text-slate-500">{c.referencia ?? "—"}</td>
+                            <td className="px-4 py-3 font-semibold text-emerald-700 tabular-nums">Gs. {Math.round(c.monto).toLocaleString("es-PY")}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -2659,6 +2787,14 @@ export default function ClienteDetailPage() {
           </div>
         </div>
       )}
+
+      {/* Modal registrar pago para cuentas por cobrar (ventas a crédito) */}
+      <RegistrarCobroModalCxc
+        open={!!cobrandoCxc}
+        cuenta={cobrandoCxc}
+        onClose={() => setCobrandoCxc(null)}
+        onExito={async () => { await cargarCxcCliente(); }}
+      />
 
     </div>
   );
