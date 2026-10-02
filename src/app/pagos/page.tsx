@@ -74,6 +74,9 @@ export default function PagosPage() {
   const [hasta, setHasta] = useState("");
   const [filtroClienteId, setFiltroClienteId] = useState("");
   const [toast, setToast] = useState<string | null>(null);
+  // Todos los clientes registrados (para poder buscar/seleccionar cualquiera,
+  // no solo los que ya tienen cuenta por cobrar o cobros cargados).
+  const [clientesTodos, setClientesTodos] = useState<Array<{ id: string; label: string; doc?: string }>>([]);
 
   const [cobrando, setCobrando] = useState<Cuenta | null>(null);
   const [reciboBusy, setReciboBusy] = useState<string | null>(null);
@@ -100,6 +103,29 @@ export default function PagosPage() {
   useEffect(() => {
     void cargar();
   }, [cargar]);
+
+  // Carga del padrón completo de clientes para el buscador (una sola vez).
+  useEffect(() => {
+    void (async () => {
+      try {
+        const res = await fetchWithSupabaseSession("/api/clientes", { cache: "no-store" });
+        const json = await res.json();
+        const arr = Array.isArray(json?.data) ? (json.data as Record<string, unknown>[]) : [];
+        setClientesTodos(
+          arr
+            .map((c) => {
+              const id = typeof c.id === "string" ? c.id : "";
+              const nombre = String(c.empresa ?? c.nombre_contacto ?? "Cliente").trim() || "Cliente";
+              const doc = String(c.ruc ?? c.documento ?? "").trim();
+              return { id, label: nombre, doc: doc || undefined };
+            })
+            .filter((c) => c.id)
+        );
+      } catch {
+        /* sin padrón: el buscador cae a los clientes de cuentas/cobros */
+      }
+    })();
+  }, []);
 
   const enRango = useCallback(
     (fecha: string | null) => {
@@ -129,15 +155,17 @@ export default function PagosPage() {
     [cobros, desde, hasta, enRango, filtroClienteId]
   );
 
-  // Opciones únicas de cliente extraídas del data cargado (sin fetch extra).
+  // Opciones de cliente: TODOS los registrados (padrón completo). Como respaldo
+  // se suman los que aparezcan en cuentas/cobros por si el padrón no cargó.
   const clientesOpts = useMemo<SearchableOption[]>(() => {
-    const map = new Map<string, string>();
-    for (const c of cuentas) if (c.cliente_id) map.set(c.cliente_id, c.cliente_nombre || "Cliente");
-    for (const c of cobros) if (c.cliente_id) map.set(c.cliente_id, c.cliente_nombre || "Cliente");
-    const list = [...map.entries()].map(([id, nombre]) => ({ id, label: nombre }));
+    const map = new Map<string, { label: string; doc?: string }>();
+    for (const c of clientesTodos) map.set(c.id, { label: c.label, doc: c.doc });
+    for (const c of cuentas) if (c.cliente_id && !map.has(c.cliente_id)) map.set(c.cliente_id, { label: c.cliente_nombre || "Cliente" });
+    for (const c of cobros) if (c.cliente_id && !map.has(c.cliente_id)) map.set(c.cliente_id, { label: c.cliente_nombre || "Cliente" });
+    const list = [...map.entries()].map(([id, v]) => ({ id, label: v.label, sublabel: v.doc }));
     list.sort((a, b) => a.label.localeCompare(b.label));
     return [{ id: "", label: "— Todos los clientes —" }, ...list];
-  }, [cuentas, cobros]);
+  }, [clientesTodos, cuentas, cobros]);
 
   const sumPend = useMemo(
     () => pendientes.reduce((a, c) => ({ total: a.total + c.total, saldo: a.saldo + c.saldo }), { total: 0, saldo: 0 }),
