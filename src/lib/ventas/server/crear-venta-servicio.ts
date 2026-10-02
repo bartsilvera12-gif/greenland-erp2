@@ -194,7 +194,9 @@ export async function crearVentaServicio(
       });
     if (ins.error) console.error("[crearVentaServicio] cxc contado:", ins.error.message);
   } else {
-    const n = Math.max(1, Math.min(120, Math.trunc(Number(body.cuotas_cantidad) || 1)));
+    // Tope alineado con la UI (240). La empresa financia hasta 130 meses, así que
+    // 120 cortaba planes válidos en silencio. Ver Nueva Venta y el form de cliente.
+    const n = Math.max(1, Math.min(240, Math.trunc(Number(body.cuotas_cantidad) || 1)));
     const cuotaMonto = Number(body.cuota_monto) > 0
       ? Math.round(Number(body.cuota_monto))
       : Math.round(total / n);
