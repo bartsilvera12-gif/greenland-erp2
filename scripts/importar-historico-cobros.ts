@@ -398,11 +398,15 @@ async function main() {
       const { obligaciones } = generarCronograma(v);
       const p = pagos.get(v.idVenta);
       const monedaCxc = v.moneda === "USD" ? "USD" : "PYG";
-      for (const o of obligaciones) {
-        // ¿pagada?
+      const totalObligaciones = obligaciones.length;
+      for (let idx = 0; idx < obligaciones.length; idx++) {
+        const o = obligaciones[idx];
+        const secuencia = idx + 1; // numero_cuota correlativo y único por venta
+        // ¿pagada? Modo SEGURO: solo lo que está claro (pagado hasta cuota N,
+        // refuerzos/cancelación con fecha). El flag "saldada" (contado/cancelado)
+        // NO marca pagado por sí solo: queda pendiente hasta que el cliente confirme.
         let pagada = false;
-        if (p?.saldada) pagada = true;
-        else if (o.tipo === "cuota" && p && o.numero <= p.cuotasPagadas) pagada = true;
+        if (o.tipo === "cuota" && p && o.numero <= p.cuotasPagadas) pagada = true;
         else if (o.tipo === "refuerzo" && p && o.numero <= p.refuerzosPagados) pagada = true;
         else if (o.tipo === "cancelacion" && p?.cancelacionPagada) pagada = true;
         const saldo = pagada ? 0 : o.monto;
@@ -410,7 +414,7 @@ async function main() {
         const etiqueta = o.tipo === "cuota" ? `${numeroControl}-C${o.numero}` : o.tipo === "refuerzo" ? `${numeroControl}-R${o.numero}` : `${numeroControl}-CANC`;
         const insC = await client.query(
           `INSERT INTO ${S}.cuentas_por_cobrar (empresa_id, cliente_id, venta_id, numero_venta, fecha_emision, fecha_vencimiento, moneda, total, saldo, estado, numero_cuota, total_cuotas, tipo, observaciones) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,
-          [empresaId, clienteId, ventaId, etiqueta, v.fechaVenta, o.vencimiento, monedaCxc, o.monto, saldo, estado, o.numero, o.totalDeTipo, o.tipo, v.descripcion]);
+          [empresaId, clienteId, ventaId, etiqueta, v.fechaVenta, o.vencimiento, monedaCxc, o.monto, saldo, estado, secuencia, totalObligaciones, o.tipo, v.descripcion]);
         oblCreadas++;
         if (pagada) {
           const fp = p?.fechaUltimoPago ?? o.vencimiento;
