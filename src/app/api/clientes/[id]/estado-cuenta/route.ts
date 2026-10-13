@@ -46,7 +46,7 @@ export async function GET(request: NextRequest, ctxParams: { params: Promise<{ i
     // Cuentas por cobrar (movimientos de crédito).
     const cxcQ = await ctx.supabase
       .from("cuentas_por_cobrar")
-      .select("id, venta_id, numero_venta, fecha_emision, fecha_vencimiento, moneda, total, saldo, estado")
+      .select("id, venta_id, numero_venta, fecha_emision, fecha_vencimiento, moneda, total, saldo, estado, tipo")
       .eq("empresa_id", empresaId)
       .eq("cliente_id", id)
       .order("fecha_emision", { ascending: false });
@@ -67,6 +67,7 @@ export async function GET(request: NextRequest, ctxParams: { params: Promise<{ i
         id: String(r.id),
         venta_id: r.venta_id ? String(r.venta_id) : null,
         numero_venta: r.numero_venta ?? null,
+        tipo: (r.tipo as string) ?? "cuota",
         fecha_emision: r.fecha_emision ?? null,
         fecha_vencimiento: venc,
         total,

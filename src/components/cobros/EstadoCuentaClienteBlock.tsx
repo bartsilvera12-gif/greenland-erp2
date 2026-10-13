@@ -7,6 +7,7 @@ import { RegistrarCobroModalCxc, type CxcRef } from "@/components/cobros/Registr
 
 type Mov = {
   id: string;
+  tipo?: string; // cuota | refuerzo | cancelacion
   numero_venta: string | null;
   fecha_emision: string | null;
   fecha_vencimiento: string | null;
@@ -185,7 +186,15 @@ export function EstadoCuentaClienteBlock({
                     return (
                       <tr key={x.id} className="hover:bg-slate-50">
                         <td className="py-2.5 px-3 sm:px-4">
-                          <span className="inline-flex items-center gap-1.5 text-xs text-slate-600"><span className="h-1.5 w-1.5 rounded-full bg-[#4FAEB2]" /> Crédito</span>
+                          {(() => {
+                            const t = x.tipo ?? "cuota";
+                            const cfg = t === "refuerzo"
+                              ? { dot: "bg-amber-500", label: "Refuerzo" }
+                              : t === "cancelacion"
+                              ? { dot: "bg-purple-500", label: "Cancelación" }
+                              : { dot: "bg-[#4FAEB2]", label: "Cuota" };
+                            return <span className="inline-flex items-center gap-1.5 text-xs text-slate-600"><span className={`h-1.5 w-1.5 rounded-full ${cfg.dot}`} /> {cfg.label}</span>;
+                          })()}
                         </td>
                         <td className="py-2.5 px-3 font-mono font-medium text-gray-800">{x.numero_venta ?? "—"}</td>
                         <td className="py-2.5 px-3 text-gray-600">{fmtFecha(x.fecha_emision)}</td>
