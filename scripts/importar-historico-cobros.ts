@@ -1,46 +1,34 @@
 /**
- * Importa el HISTÓRICO de ventas a crédito, sus cuotas y los pagos ya recibidos
- * desde un Excel, al schema de Green Land. Deja el "Estado de cuenta" de cada
- * cliente completo (ventas + cuotas + cobros).
+ * Importa el HISTÓRICO de ventas a crédito (cuotas, refuerzos anuales y
+ * cancelación final) + los pagos ya cobrados, desde un Excel, al schema de
+ * Green Land. Deja el "Estado de cuenta" de cada cliente completo.
  *
  * NO toca stock, compras, producción ni SIFEN: solo crea ventas a crédito,
- * cuentas por cobrar (cuotas) y cobros de clientes.
+ * cuentas por cobrar (cuotas / refuerzos / cancelación) y cobros de clientes.
  *
  * Uso:
- *   # 1) Generar la plantilla vacía para llenar:
  *   npx tsx scripts/importar-historico-cobros.ts --plantilla historico.xlsx
+ *   npx tsx scripts/importar-historico-cobros.ts historico.xlsx            # PRUEBA
+ *   npx tsx scripts/importar-historico-cobros.ts historico.xlsx --apply    # aplica
  *
- *   # 2) Modo PRUEBA (no escribe nada, solo valida y reporta):
- *   npx tsx scripts/importar-historico-cobros.ts historico.xlsx
+ * Variables (.env.local): SUPABASE_DB_URL (o DIRECT_URL / DATABASE_URL),
+ *   NEURA_CLIENT_SCHEMA (opcional). Opciones: --empresa, --empresa-id, --schema.
  *
- *   # 3) Aplicar de verdad (todo dentro de una transacción):
- *   npx tsx scripts/importar-historico-cobros.ts historico.xlsx --apply
- *
- * Variables (en .env.local):
- *   SUPABASE_DB_URL  (o DIRECT_URL / DATABASE_URL)
- *   NEURA_CLIENT_SCHEMA  (opcional; si no, se resuelve por el nombre de la empresa)
- *
- * Opciones:
- *   --empresa "Green Land"   nombre a buscar en zentra_erp.empresas (default: Green)
- *   --empresa-id <uuid>      fuerza el empresa_id (saltea la búsqueda por nombre)
- *   --schema <nombre>        fuerza el schema (saltea data_schema de la empresa)
- *
- * ---------------------------------------------------------------------------
- * ESTRUCTURA DEL EXCEL (dos hojas):
- *
- * Hoja "Ventas" — una fila por venta a crédito:
+ * -------------------------------------------------------------------------
+ * EXCEL — Hoja "Ventas" (una fila por venta):
  *   ID Venta | RUC/CI | Razón social | Fecha venta | Descripción | Moneda |
- *   Total | Cantidad cuotas | Monto por cuota | Primera cuota vence | Cada (días)
+ *   Total | Cantidad cuotas | Monto por cuota | Primera cuota vence | Cada (días) |
+ *   Cantidad Refuerzo | Monto Refuerzo | Fecha Refuerzo |
+ *   Cancelacion | Monto Cancelacion | Fecha Cancelacion
  *
- * Hoja "Pagos" — una fila por pago ya recibido (opcional):
- *   ID Venta | N° cuota | Fecha pago | Monto | Método | Referencia
- *
- * - "ID Venta" es un código que inventás vos (ej: V001) y sirve para enlazar los
- *   pagos con su venta. Debe ser único por venta.
- * - Fechas en formato dd/mm/aaaa (o celdas con formato de fecha de Excel).
- * - "Monto por cuota" vacío => se reparte el total en partes iguales.
- * - "Cada (días)" vacío => 30 (mensual). Ej: 15 quincenal, 60 bimestral.
- * ---------------------------------------------------------------------------
+ * EXCEL — Hoja "Pagos" (resumen de lo cobrado por venta):
+ *   ID Venta | ... | N° cuota | total cuotas | Fecha pago | Monto | Método | Referencia
+ *   - Una fila "normal" = pagado HASTA la cuota N° (se marcan 1..N pagadas).
+ *   - Referencia "refuerzo..." con fecha = ese(os) refuerzo(s) pagado(s).
+ *   - Referencia "cancelaci..." con fecha = cancelación pagada.
+ *   - Método "cancelado" / "contado" (sin N° cuota) = venta saldada por completo.
+ *   - Filas sin fecha o separadores (ej. "MANZANA A") se ignoran.
+ * -------------------------------------------------------------------------
  */
 import { config } from "dotenv";
 import * as XLSX from "xlsx";
@@ -50,6 +38,15 @@ import pg from "pg";
 config({ path: path.resolve(process.cwd(), ".env.local") });
 
 const MAX_CUOTAS = 240;
+const REFUERZO_INTERVALO_DIAS = 365; // refuerzos anuales (mismo mes cada año)
+
+// Correcciones confirmadas por el cliente (total mal tipeado en la planilla).
+const CORRECCIONES_TOTAL: Record<string, number> = {
+  V015: 243497090, // 130 cuotas x 1.000.000 + 10 refuerzos x 11.349.709
+};
+// Ventas que son refinanciación / caso especial: se omiten del auto-import y se
+// reportan para cargarlas a mano (el detalle de columnas no cierra con el total).
+const REFINANCIACION = new Set<string>(["V012"]);
 
 // ---------- CLI ----------
 const argv = process.argv.slice(2);
@@ -59,58 +56,44 @@ const plantillaPath = plantillaIdx >= 0 ? argv[plantillaIdx + 1] : null;
 const empresaNombre = getOpt("--empresa") ?? "Green";
 const empresaIdForzado = getOpt("--empresa-id");
 const schemaForzado = getOpt("--schema");
-const file = argv.find((a, i) => !a.startsWith("--") && argv[i - 1] !== "--empresa" && argv[i - 1] !== "--empresa-id" && argv[i - 1] !== "--schema" && argv[i - 1] !== "--plantilla");
+const flagsConValor = new Set(["--empresa", "--empresa-id", "--schema", "--plantilla"]);
+const file = argv.find((a, i) => !a.startsWith("--") && !flagsConValor.has(argv[i - 1]));
 
 function getOpt(flag: string): string | null {
   const i = argv.indexOf(flag);
   return i >= 0 && argv[i + 1] ? argv[i + 1] : null;
 }
 
-// ---------- Plantilla ----------
-if (plantillaPath) {
-  generarPlantilla(plantillaPath);
-  process.exit(0);
-}
-
+if (plantillaPath) { generarPlantilla(plantillaPath); process.exit(0); }
 if (!file) {
   console.error("Uso: npx tsx scripts/importar-historico-cobros.ts <archivo.xlsx> [--apply]");
   console.error("     npx tsx scripts/importar-historico-cobros.ts --plantilla historico.xlsx");
   process.exit(1);
 }
-
 const dbUrl =
-  process.env.SUPABASE_DB_URL?.trim() ||
-  process.env.DIRECT_URL?.trim() ||
-  process.env.DATABASE_URL?.trim() ||
-  null;
+  process.env.SUPABASE_DB_URL?.trim() || process.env.DIRECT_URL?.trim() ||
+  process.env.DATABASE_URL?.trim() || null;
 
 // ---------- Tipos ----------
 type Row = Record<string, unknown>;
+type TipoCuota = "cuota" | "refuerzo" | "cancelacion";
 
 interface VentaImport {
-  fila: number;
-  idVenta: string;
-  ruc: string | null;
-  documento: string | null;
-  razonSocial: string;
-  fechaVenta: string; // YYYY-MM-DD
-  descripcion: string | null;
-  moneda: "GS" | "USD";
-  total: number;
-  cuotas: number;
-  montoCuota: number | null;
-  primeraCuota: string | null; // YYYY-MM-DD
-  intervalo: number;
+  fila: number; idVenta: string; ruc: string | null; documento: string | null;
+  razonSocial: string; fechaVenta: string; descripcion: string | null;
+  moneda: "GS" | "USD"; total: number;
+  cuotas: number; montoCuota: number | null; primeraCuota: string | null; intervalo: number;
+  refCantidad: number; refMonto: number; refFecha: string | null;
+  cancCantidad: number; cancMonto: number; cancFecha: string | null;
 }
-
-interface PagoImport {
-  fila: number;
+interface PagoVenta {
   idVenta: string;
-  numeroCuota: number;
-  fechaPago: string; // YYYY-MM-DD
-  monto: number;
-  metodo: string;
-  referencia: string | null;
+  cuotasPagadas: number;      // nº de cuotas normales pagadas (1..N)
+  refuerzosPagados: number;   // nº de refuerzos pagados
+  cancelacionPagada: boolean;
+  saldada: boolean;           // método "cancelado"/"contado" => todo pagado
+  fechaUltimoPago: string | null;
+  notas: string[];            // para el reporte de asunciones
 }
 
 // ---------- Utilidades ----------
@@ -118,365 +101,337 @@ function quoteIdent(s: string): string {
   if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(s)) throw new Error(`schema inválido: ${s}`);
   return `"${s}"`;
 }
-
-function str(v: unknown): string {
-  return v === null || v === undefined ? "" : String(v).trim();
-}
-
+function str(v: unknown): string { return v === null || v === undefined ? "" : String(v).trim(); }
+function esVacio(v: unknown): boolean { const s = str(v); return s === "" || s === "-"; }
 function num(v: unknown): number {
   if (typeof v === "number") return v;
-  const n = Number(String(v ?? "").replace(/\./g, "").replace(/,/g, ".").replace(/[^\d.-]/g, ""));
+  // tolera "66.911.663." (miles con punto) y "1.000.000"
+  const s = String(v ?? "").trim().replace(/\.$/, "");
+  const n = Number(s.replace(/\./g, "").replace(/,/g, ".").replace(/[^\d.-]/g, ""));
   return Number.isFinite(n) ? n : NaN;
 }
-
-/** Acepta Date (Excel), número serial, o texto dd/mm/aaaa | aaaa-mm-dd. Devuelve YYYY-MM-DD. */
 function toISODate(v: unknown): string | null {
-  if (v == null || v === "") return null;
+  if (v == null || v === "" || v === "-") return null;
   if (v instanceof Date && !isNaN(v.getTime())) return v.toISOString().slice(0, 10);
   if (typeof v === "number") {
     const d = XLSX.SSF?.parse_date_code?.(v);
     if (d) return `${d.y}-${String(d.m).padStart(2, "0")}-${String(d.d).padStart(2, "0")}`;
   }
   const s = String(v).trim();
-  let m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (m) return `${m[1]}-${m[2]}-${m[3]}`;
-  m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
-  if (m) {
-    const d = m[1].padStart(2, "0");
-    const mo = m[2].padStart(2, "0");
-    let y = m[3];
-    if (y.length === 2) y = `20${y}`;
-    return `${y}-${mo}-${d}`;
-  }
+  m = s.match(/^(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})$/);
+  if (m) { const d = m[1].padStart(2, "0"), mo = m[2].padStart(2, "0"); let y = m[3]; if (y.length === 2) y = `20${y}`; return `${y}-${mo}-${d}`; }
   return null;
 }
-
 function addDaysISO(iso: string, days: number): string {
-  const d = new Date(`${iso}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + days);
-  return d.toISOString().slice(0, 10);
+  const d = new Date(`${iso}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + days); return d.toISOString().slice(0, 10);
 }
-
-/** Lee una celda probando varios nombres de header (tolerante a acentos/variantes). */
+/** Suma años conservando el mes/día (para refuerzos anuales). */
+function addYearsISO(iso: string, years: number): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  return `${y + years}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+}
 function cell(row: Row, ...names: string[]): unknown {
   const norm = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/\s+/g, " ").trim();
   const map = new Map<string, unknown>();
   for (const k of Object.keys(row)) map.set(norm(k), row[k]);
-  for (const n of names) {
-    const hit = map.get(norm(n));
-    if (hit !== undefined) return hit;
-  }
+  for (const n of names) { const hit = map.get(norm(n)); if (hit !== undefined) return hit; }
   return undefined;
 }
 
 // ---------- Plantilla ----------
 function generarPlantilla(destino: string) {
-  const ventas = [
-    {
-      "ID Venta": "V001",
-      "RUC/CI": "1234567",
-      "Razón social": "Juan Pérez",
-      "Fecha venta": "15/01/2026",
-      "Descripción": "Lote 12 - Barrio San José",
-      "Moneda": "GS",
-      "Total": 130000000,
-      "Cantidad cuotas": 130,
-      "Monto por cuota": 1000000,
-      "Primera cuota vence": "15/02/2026",
-      "Cada (días)": 30,
-    },
-  ];
+  const ventas = [{
+    "ID Venta": "V001", "RUC/CI": "1234567", "Razón social": "Juan Pérez",
+    "Fecha venta": "15/01/2026", "Descripción": "Lote 4 - Manzana A", "Moneda": "GS",
+    "Total": 231021496, "Cantidad cuotas": 130, "Monto por cuota": 1000000,
+    "Primera cuota vence": "05/11/2025", "Cada (días)": 30,
+    "Cantidad Refuerzo": 10, "Monto Refuerzo": 5000000, "Fecha Refuerzo": "05/10/2026",
+    "Cancelacion": 1, "Monto Cancelacion": 51021496, "Fecha Cancelacion": "20/09/2036",
+  }];
   const pagos = [
-    { "ID Venta": "V001", "N° cuota": 1, "Fecha pago": "15/02/2026", "Monto": 1000000, "Método": "efectivo", "Referencia": "" },
-    { "ID Venta": "V001", "N° cuota": 2, "Fecha pago": "15/03/2026", "Monto": 1000000, "Método": "transferencia", "Referencia": "" },
+    { "ID Venta": "V001", "Razón social": "Juan Pérez", "N° cuota": 13, "total cuotas": 130, "Fecha pago": "05/10/2026", "Monto": 1000000, "Método": "transferencia", "Referencia": "" },
+    { "ID Venta": "V001", "Razón social": "Juan Pérez", "N° cuota": 1, "total cuotas": 10, "Fecha pago": "", "Monto": 5000000, "Método": "", "Referencia": "refuerzo anual cada octubre" },
   ];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(ventas), "Ventas");
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(pagos), "Pagos");
   XLSX.writeFile(wb, path.resolve(destino));
   console.log(`✅ Plantilla creada en: ${path.resolve(destino)}`);
-  console.log(`   Llená la hoja "Ventas" (una fila por venta) y "Pagos" (una fila por pago recibido).`);
-  console.log(`   Después corré:  npx tsx scripts/importar-historico-cobros.ts ${destino}`);
 }
 
-// ---------- Parseo del Excel ----------
-function parseExcel(ruta: string): { ventas: VentaImport[]; pagos: PagoImport[]; errores: string[] } {
+// ---------- Parseo ----------
+function parseExcel(ruta: string): { ventas: VentaImport[]; pagos: Map<string, PagoVenta>; errores: string[]; avisos: string[] } {
   const wb = XLSX.readFile(path.resolve(ruta), { cellDates: true });
-  const errores: string[] = [];
+  const errores: string[] = [], avisos: string[] = [];
 
   const wsV = wb.Sheets["Ventas"] ?? wb.Sheets[wb.SheetNames[0]];
   if (!wsV) throw new Error('No se encontró la hoja "Ventas".');
   const rowsV = XLSX.utils.sheet_to_json<Row>(wsV, { defval: null });
-
   const ventas: VentaImport[] = [];
-  const idsVistos = new Set<string>();
-  rowsV.forEach((r, i) => {
-    const fila = i + 2; // +1 header, +1 base-1
-    const idVenta = str(cell(r, "ID Venta", "IDVenta", "ID", "Id venta"));
-    const razonSocial = str(cell(r, "Razón social", "Razon social", "Cliente", "Nombre"));
-    if (!idVenta && !razonSocial) return; // fila vacía
-    if (!idVenta) { errores.push(`Ventas fila ${fila}: falta "ID Venta".`); return; }
-    if (idsVistos.has(idVenta)) { errores.push(`Ventas fila ${fila}: "ID Venta" duplicado (${idVenta}).`); return; }
-    idsVistos.add(idVenta);
-    if (!razonSocial) { errores.push(`Ventas fila ${fila}: falta "Razón social".`); return; }
+  const ids = new Set<string>();
 
-    const fechaVenta = toISODate(cell(r, "Fecha venta", "Fecha", "Fecha de venta"));
+  rowsV.forEach((r, i) => {
+    const fila = i + 2;
+    const idVenta = str(cell(r, "ID Venta", "ID"));
+    const razon = str(cell(r, "Razón social", "Cliente", "Nombre"));
+    if (!idVenta && !razon) return;
+    if (!idVenta) { errores.push(`Ventas fila ${fila}: falta "ID Venta".`); return; }
+    if (ids.has(idVenta)) { errores.push(`Ventas fila ${fila}: "ID Venta" duplicado (${idVenta}).`); return; }
+    ids.add(idVenta);
+    if (!razon) { errores.push(`Ventas fila ${fila}: falta "Razón social".`); return; }
+    const fechaVenta = toISODate(cell(r, "Fecha venta", "Fecha"));
     if (!fechaVenta) { errores.push(`Ventas fila ${fila}: "Fecha venta" inválida.`); return; }
 
-    const total = num(cell(r, "Total", "Monto total", "Importe"));
-    if (!Number.isFinite(total) || total <= 0) { errores.push(`Ventas fila ${fila}: "Total" inválido.`); return; }
+    let total = num(cell(r, "Total", "Monto total"));
+    if (CORRECCIONES_TOTAL[idVenta] !== undefined) {
+      avisos.push(`${idVenta}: total corregido ${Number.isFinite(total) ? total.toLocaleString("es-PY") : "?"} → ${CORRECCIONES_TOTAL[idVenta].toLocaleString("es-PY")} (confirmado por el cliente).`);
+      total = CORRECCIONES_TOTAL[idVenta];
+    }
+    if (!Number.isFinite(total) || total <= 0) { errores.push(`Ventas fila ${fila} (${idVenta}): "Total" inválido.`); return; }
 
-    let cuotas = Math.trunc(num(cell(r, "Cantidad cuotas", "Cuotas", "Cant cuotas")));
+    let cuotas = Math.trunc(num(cell(r, "Cantidad cuotas", "Cuotas")));
     if (!Number.isFinite(cuotas) || cuotas < 1) cuotas = 1;
-    if (cuotas > MAX_CUOTAS) { errores.push(`Ventas fila ${fila}: cuotas (${cuotas}) supera el máximo ${MAX_CUOTAS}.`); return; }
+    if (cuotas > MAX_CUOTAS) { errores.push(`Ventas fila ${fila} (${idVenta}): cuotas ${cuotas} supera ${MAX_CUOTAS}.`); return; }
+    const mc = num(cell(r, "Monto por cuota", "Monto cuota"));
+    const montoCuota = Number.isFinite(mc) && mc > 0 ? Math.round(mc) : null;
+    const intRaw = Math.trunc(num(cell(r, "Cada (días)", "Intervalo", "Frecuencia")));
+    const intervalo = Number.isFinite(intRaw) && intRaw > 0 ? intRaw : 30;
+    const moneda: "GS" | "USD" = str(cell(r, "Moneda")).toUpperCase() === "USD" ? "USD" : "GS";
 
-    const montoCuotaRaw = num(cell(r, "Monto por cuota", "Monto cuota", "Cuota"));
-    const montoCuota = Number.isFinite(montoCuotaRaw) && montoCuotaRaw > 0 ? Math.round(montoCuotaRaw) : null;
+    // Refuerzos / cancelación (celdas "-" o vacías => 0).
+    const refCantidad = esVacio(cell(r, "Cantidad Refuerzo")) ? 0 : Math.max(0, Math.trunc(num(cell(r, "Cantidad Refuerzo"))));
+    const refMonto = esVacio(cell(r, "Monto Refuerzo")) ? 0 : Math.round(num(cell(r, "Monto Refuerzo")) || 0);
+    const refFecha = toISODate(cell(r, "Fecha Refuerzo"));
+    const cancCantidad = esVacio(cell(r, "Cancelacion", "Cancelación")) ? 0 : Math.max(0, Math.trunc(num(cell(r, "Cancelacion", "Cancelación"))));
+    const cancMonto = esVacio(cell(r, "Monto Cancelacion", "Monto Cancelación")) ? 0 : Math.round(num(cell(r, "Monto Cancelacion", "Monto Cancelación")) || 0);
+    const cancFecha = toISODate(cell(r, "Fecha Cancelacion", "Fecha Cancelación"));
 
-    const intervaloRaw = Math.trunc(num(cell(r, "Cada (días)", "Cada dias", "Intervalo", "Frecuencia")));
-    const intervalo = Number.isFinite(intervaloRaw) && intervaloRaw > 0 ? intervaloRaw : 30;
-
-    const monedaRaw = str(cell(r, "Moneda")).toUpperCase();
-    const moneda: "GS" | "USD" = monedaRaw === "USD" ? "USD" : "GS";
-
+    const rucDoc = str(cell(r, "RUC/CI", "RUC")) || null;
     ventas.push({
-      fila,
-      idVenta,
-      ruc: str(cell(r, "RUC/CI", "RUC", "RUC / CI")) || null,
-      documento: str(cell(r, "CI", "Documento", "Cédula", "Cedula")) || str(cell(r, "RUC/CI", "RUC", "RUC / CI")) || null,
-      razonSocial,
-      fechaVenta,
-      descripcion: str(cell(r, "Descripción", "Descripcion", "Detalle")) || null,
-      moneda,
-      total: Math.round(total),
-      cuotas,
-      montoCuota,
-      primeraCuota: toISODate(cell(r, "Primera cuota vence", "Primera cuota", "Primer vencimiento")),
-      intervalo,
+      fila, idVenta, ruc: rucDoc, documento: str(cell(r, "CI", "Documento")) || rucDoc,
+      razonSocial: razon, fechaVenta, descripcion: str(cell(r, "Descripción", "Detalle")) || null,
+      moneda, total, cuotas, montoCuota, primeraCuota: toISODate(cell(r, "Primera cuota vence", "Primera cuota")), intervalo,
+      refCantidad, refMonto, refFecha, cancCantidad, cancMonto, cancFecha,
     });
   });
 
-  const pagos: PagoImport[] = [];
+  // ----- Pagos: resumir por venta -----
+  const pagos = new Map<string, PagoVenta>();
   const wsP = wb.Sheets["Pagos"];
   if (wsP) {
     const rowsP = XLSX.utils.sheet_to_json<Row>(wsP, { defval: null });
-    rowsP.forEach((r, i) => {
-      const fila = i + 2;
-      const idVenta = str(cell(r, "ID Venta", "IDVenta", "ID"));
-      if (!idVenta) return; // fila vacía
-      const numeroCuota = Math.trunc(num(cell(r, "N° cuota", "N cuota", "Nro cuota", "Cuota", "Numero cuota")));
-      if (!Number.isFinite(numeroCuota) || numeroCuota < 1) { errores.push(`Pagos fila ${fila}: "N° cuota" inválido.`); return; }
-      const fechaPago = toISODate(cell(r, "Fecha pago", "Fecha", "Fecha de pago"));
-      if (!fechaPago) { errores.push(`Pagos fila ${fila}: "Fecha pago" inválida.`); return; }
-      const monto = num(cell(r, "Monto", "Importe", "Pago"));
-      if (!Number.isFinite(monto) || monto <= 0) { errores.push(`Pagos fila ${fila}: "Monto" inválido.`); return; }
-      const metodoRaw = str(cell(r, "Método", "Metodo", "Forma de pago")).toLowerCase();
-      const metodo = ["efectivo", "transferencia", "tarjeta", "cheque", "otro"].includes(metodoRaw) ? metodoRaw : "efectivo";
-      pagos.push({
-        fila,
-        idVenta,
-        numeroCuota,
-        fechaPago,
-        monto: Math.round(monto),
-        metodo,
-        referencia: str(cell(r, "Referencia", "Ref", "Comprobante")) || null,
-      });
-    });
+    for (const r of rowsP) {
+      const idVenta = str(cell(r, "ID Venta", "ID"));
+      if (!idVenta || !ids.has(idVenta)) continue; // separador (MANZANA A) o id inexistente
+      const ref = str(cell(r, "Referencia")).toLowerCase();
+      const metodo = str(cell(r, "Método", "Metodo")).toLowerCase();
+      const fecha = toISODate(cell(r, "Fecha pago", "Fecha"));
+      const nCuota = Math.trunc(num(cell(r, "N° cuota", "Nro cuota", "Cuota"))) || 0;
+
+      const pv = pagos.get(idVenta) ?? { idVenta, cuotasPagadas: 0, refuerzosPagados: 0, cancelacionPagada: false, saldada: false, fechaUltimoPago: null, notas: [] };
+
+      if (metodo === "cancelado" || metodo === "contado") {
+        pv.saldada = true;
+        pv.notas.push(`marcada como "${metodo}" → se asume saldada por completo (confirmar).`);
+      } else if (ref.includes("refuerzo")) {
+        if (fecha) { pv.refuerzosPagados = Math.max(pv.refuerzosPagados, nCuota || 1); pv.fechaUltimoPago = maxFecha(pv.fechaUltimoPago, fecha); }
+      } else if (ref.includes("cancelaci")) {
+        if (fecha) { pv.cancelacionPagada = true; pv.fechaUltimoPago = maxFecha(pv.fechaUltimoPago, fecha); }
+      } else if (fecha && nCuota > 0) {
+        pv.cuotasPagadas = Math.max(pv.cuotasPagadas, nCuota);
+        pv.fechaUltimoPago = maxFecha(pv.fechaUltimoPago, fecha);
+      } else if (ref || str(cell(r, "Monto")) ) {
+        // fila con monto/nota pero sin fecha clara => a revisar
+        pv.notas.push(`fila sin fecha/cuota clara (ref: "${str(cell(r, "Referencia"))}", método: "${str(cell(r, "Método"))}") → no se aplicó pago.`);
+      }
+      pagos.set(idVenta, pv);
+    }
   }
 
-  // Validar que cada pago tenga su venta.
-  for (const p of pagos) {
-    if (!idsVistos.has(p.idVenta)) errores.push(`Pagos fila ${p.fila}: "ID Venta" ${p.idVenta} no existe en la hoja Ventas.`);
-  }
-
-  return { ventas, pagos, errores };
+  return { ventas, pagos, errores, avisos };
 }
 
-// ---------- Generación de cuotas (misma lógica que la app) ----------
-interface CuotaPlan {
-  numeroCuota: number;
-  totalCuotas: number;
-  monto: number;
-  fechaVencimiento: string;
+function maxFecha(a: string | null, b: string | null): string | null {
+  if (!a) return b; if (!b) return a; return a >= b ? a : b;
 }
-function planCuotas(v: VentaImport): CuotaPlan[] {
+
+// ---------- Generación del cronograma ----------
+interface Obligacion { tipo: TipoCuota; numero: number; totalDeTipo: number; monto: number; vencimiento: string; }
+
+function generarCronograma(v: VentaImport): { obligaciones: Obligacion[]; sumaCalculada: number; cuadra: boolean } {
+  const obligaciones: Obligacion[] = [];
+  // 1) Cuotas normales (ajustando la última por redondeo SOLO si no hay refuerzos/cancelación).
   const n = Math.max(1, Math.min(MAX_CUOTAS, v.cuotas));
-  const cuotaMonto = v.montoCuota && v.montoCuota > 0 ? v.montoCuota : Math.round(v.total / n);
-  let baseFecha = v.primeraCuota ?? addDaysISO(v.fechaVenta, v.intervalo);
-  const plan: CuotaPlan[] = [];
-  let acumulado = 0;
+  const base = v.montoCuota && v.montoCuota > 0 ? v.montoCuota : Math.round(v.total / n);
+  const hayExtras = v.refCantidad > 0 || v.cancCantidad > 0;
+  const objetivoCuotas = hayExtras ? base * n : v.total; // si no hay extras, las cuotas deben sumar el total
+  let fc = v.primeraCuota ?? addDaysISO(v.fechaVenta, v.intervalo);
+  let acum = 0;
   for (let i = 1; i <= n; i++) {
-    const monto = i < n ? cuotaMonto : Math.round(v.total - acumulado);
-    acumulado += monto;
-    plan.push({ numeroCuota: i, totalCuotas: n, monto, fechaVencimiento: baseFecha });
-    baseFecha = addDaysISO(baseFecha, v.intervalo);
+    const monto = i < n ? base : Math.round(objetivoCuotas - acum);
+    acum += monto;
+    obligaciones.push({ tipo: "cuota", numero: i, totalDeTipo: n, monto, vencimiento: fc });
+    fc = addDaysISO(fc, v.intervalo);
   }
-  return plan;
+  // 2) Refuerzos anuales.
+  if (v.refCantidad > 0 && v.refMonto > 0) {
+    let rf = v.refFecha ?? addYearsISO(v.primeraCuota ?? v.fechaVenta, 1);
+    for (let i = 1; i <= v.refCantidad; i++) {
+      obligaciones.push({ tipo: "refuerzo", numero: i, totalDeTipo: v.refCantidad, monto: v.refMonto, vencimiento: rf });
+      rf = addYearsISO(rf, 1);
+    }
+  }
+  // 3) Cancelación final.
+  if (v.cancCantidad > 0 && v.cancMonto > 0) {
+    const cf = v.cancFecha ?? addYearsISO(v.fechaVenta, 11);
+    for (let i = 1; i <= v.cancCantidad; i++) {
+      obligaciones.push({ tipo: "cancelacion", numero: i, totalDeTipo: v.cancCantidad, monto: v.cancMonto, vencimiento: cf });
+    }
+  }
+  const sumaCalculada = obligaciones.reduce((a, o) => a + o.monto, 0);
+  const cuadra = Math.abs(sumaCalculada - v.total) <= n; // tolerancia de redondeo
+  return { obligaciones, sumaCalculada, cuadra };
 }
 
 // ---------- Main ----------
 async function main() {
-  const { ventas, pagos, errores } = parseExcel(file!);
-
+  const { ventas, pagos, errores, avisos } = parseExcel(file!);
   console.log(`\n=== Importación de histórico (${apply ? "APLICAR" : "PRUEBA — no escribe"}) ===`);
   console.log(`Archivo: ${path.resolve(file!)}`);
-  console.log(`Ventas leídas: ${ventas.length} · Pagos leídos: ${pagos.length}`);
+  console.log(`Ventas: ${ventas.length}`);
 
+  for (const a of avisos) console.log(`  · aviso: ${a}`);
   if (errores.length) {
-    console.error(`\n❌ Se encontraron ${errores.length} error(es). Corregí el Excel y volvé a correr:\n`);
+    console.error(`\n❌ ${errores.length} error(es):`);
     for (const e of errores) console.error(`   • ${e}`);
     process.exit(1);
   }
+  if (!ventas.length) { console.error("No hay ventas."); process.exit(1); }
 
-  if (!ventas.length) {
-    console.error("No hay ventas para importar.");
-    process.exit(1);
+  // Análisis + reporte (sin base de datos).
+  const aCargar: VentaImport[] = [];
+  const revisar: string[] = [];
+  let totCuotas = 0, totRef = 0, totCanc = 0;
+  console.log(`\n--- Plan por venta ---`);
+  for (const v of ventas) {
+    if (REFINANCIACION.has(v.idVenta)) { revisar.push(`${v.idVenta} (${v.razonSocial}): REFINANCIACIÓN — se omite del import automático, cargar a mano.`); continue; }
+    const { obligaciones, sumaCalculada, cuadra } = generarCronograma(v);
+    if (!cuadra) {
+      revisar.push(`${v.idVenta} (${v.razonSocial}): suma ${sumaCalculada.toLocaleString("es-PY")} ≠ total ${v.total.toLocaleString("es-PY")} — NO se carga hasta corregir.`);
+      continue;
+    }
+    aCargar.push(v);
+    const nc = obligaciones.filter(o => o.tipo === "cuota").length;
+    const nr = obligaciones.filter(o => o.tipo === "refuerzo").length;
+    const ncc = obligaciones.filter(o => o.tipo === "cancelacion").length;
+    totCuotas += nc; totRef += nr; totCanc += ncc;
+    const p = pagos.get(v.idVenta);
+    let pagoTxt = "sin pagos";
+    if (p) {
+      const parts: string[] = [];
+      if (p.saldada) parts.push("SALDADA (todo pagado)");
+      if (p.cuotasPagadas) parts.push(`${p.cuotasPagadas} cuota(s) pagada(s)`);
+      if (p.refuerzosPagados) parts.push(`${p.refuerzosPagados} refuerzo(s)`);
+      if (p.cancelacionPagada) parts.push("cancelación pagada");
+      pagoTxt = parts.length ? parts.join(", ") + (p.fechaUltimoPago ? ` (últ. ${p.fechaUltimoPago})` : "") : "sin pagos";
+      for (const nota of p.notas) revisar.push(`${v.idVenta}: ${nota}`);
+    }
+    console.log(`  ${v.idVenta.padEnd(5)} ${v.razonSocial.slice(0, 24).padEnd(24)} | ${nc} cuotas${nr ? ` + ${nr} refuerzos` : ""}${ncc ? " + cancelación" : ""} | ${pagoTxt}`);
   }
 
-  // Resumen de lo que se generaría (no necesita base de datos).
-  let totalCuotasPrev = 0;
-  for (const v of ventas) totalCuotasPrev += planCuotas(v).length;
-  const sumVentas = ventas.reduce((a, v) => a + v.total, 0);
-  const sumPagos = pagos.reduce((a, p) => a + p.monto, 0);
-  console.log(`Cuotas a generar: ${totalCuotasPrev}`);
-  console.log(`Total ventas: ${sumVentas.toLocaleString("es-PY")} · Total pagos: ${sumPagos.toLocaleString("es-PY")}`);
-  for (const v of ventas.slice(0, 3)) {
-    const plan = planCuotas(v);
-    console.log(`  · ${v.idVenta} ${v.razonSocial} — ${v.cuotas} cuota(s) de ~${plan[0].monto.toLocaleString("es-PY")} desde ${plan[0].fechaVencimiento}`);
+  console.log(`\nResumen: ${aCargar.length}/${ventas.length} ventas listas | ${totCuotas} cuotas + ${totRef} refuerzos + ${totCanc} cancelaciones`);
+  if (revisar.length) {
+    console.log(`\n⚠️  A REVISAR / CONFIRMAR CON EL CLIENTE (${revisar.length}):`);
+    for (const r of revisar) console.log(`   • ${r}`);
   }
-  console.log(`✅ Validación del Excel OK (${ventas.length} ventas, ${pagos.length} pagos).`);
 
   if (!dbUrl) {
-    console.log(`\nℹ️  Sin conexión a la base (falta SUPABASE_DB_URL en .env.local).`);
-    console.log(`   La validación del Excel pasó. Para resolver la empresa y escribir, configurá la conexión.\n`);
+    console.log(`\nℹ️  Sin conexión a la base (falta SUPABASE_DB_URL). Validación offline OK.\n`);
     return;
+  }
+  if (!apply) {
+    console.log(`\n✅ PRUEBA OK. Nada se escribió. Para aplicar: --apply\n`);
+    // igual resolvemos empresa para confirmar conexión
   }
 
   const client = new pg.Client({ connectionString: dbUrl, ssl: { rejectUnauthorized: false } });
   await client.connect();
-
   try {
-    // Resolver empresa + schema.
     let empresaId = empresaIdForzado;
     let schema = schemaForzado ?? process.env.NEURA_CLIENT_SCHEMA?.trim() ?? null;
     if (!empresaId || !schema) {
       const q = await client.query<{ id: string; nombre_empresa: string | null; data_schema: string | null }>(
-        `SELECT id, nombre_empresa, data_schema FROM zentra_erp.empresas
-         WHERE lower(coalesce(nombre_empresa,'')) LIKE lower($1) ORDER BY created_at LIMIT 5`,
-        [`%${empresaNombre}%`]
-      );
-      if (!q.rows.length) throw new Error(`No se encontró ninguna empresa que coincida con "${empresaNombre}" en zentra_erp.empresas.`);
-      if (q.rows.length > 1) {
-        console.error(`\n⚠️  Más de una empresa coincide con "${empresaNombre}":`);
-        for (const r of q.rows) console.error(`   • ${r.id} | ${r.nombre_empresa} | schema=${r.data_schema}`);
-        throw new Error("Especificá cuál con --empresa-id <uuid>.");
-      }
-      empresaId = empresaId ?? q.rows[0].id;
-      schema = schema ?? q.rows[0].data_schema;
+        `SELECT id, nombre_empresa, data_schema FROM zentra_erp.empresas WHERE lower(coalesce(nombre_empresa,'')) LIKE lower($1) ORDER BY created_at LIMIT 5`,
+        [`%${empresaNombre}%`]);
+      if (!q.rows.length) throw new Error(`No se encontró empresa "${empresaNombre}".`);
+      if (q.rows.length > 1) { for (const r of q.rows) console.error(`   • ${r.id} | ${r.nombre_empresa} | ${r.data_schema}`); throw new Error("Varias empresas; usá --empresa-id."); }
+      empresaId = empresaId ?? q.rows[0].id; schema = schema ?? q.rows[0].data_schema;
       console.log(`Empresa: ${q.rows[0].nombre_empresa} (${empresaId}) · schema: ${schema}`);
     }
-    if (!schema) throw new Error("No se pudo resolver el schema (usá --schema o seteá NEURA_CLIENT_SCHEMA).");
+    if (!schema) throw new Error("No se pudo resolver el schema.");
     const S = quoteIdent(schema);
+    if (!apply) { console.log(`\n✅ PRUEBA OK (empresa/schema resueltos). Nada se escribió. Para aplicar: --apply\n`); return; }
 
-    if (!apply) {
-      console.log(`\n✅ PRUEBA OK (empresa y schema resueltos). Nada se escribió. Para aplicar agregá --apply\n`);
-      return;
-    }
-
-    // ---------- APLICAR (transacción única) ----------
     await client.query("BEGIN");
-
-    const cuentaIdPorClave = new Map<string, string>(); // `${idVenta}#${numeroCuota}` -> cuenta_por_cobrar_id
-    let ventasCreadas = 0, clientesCreados = 0, cuotasCreadas = 0, pagosCreados = 0;
-
-    for (const v of ventas) {
-      // Idempotencia: numero_control estable por idVenta.
+    let clientesCreados = 0, ventasCreadas = 0, oblCreadas = 0, cobrosCreados = 0;
+    for (const v of aCargar) {
       const numeroControl = `HIST-${v.idVenta}`;
-      const yaExiste = await client.query(`SELECT id FROM ${S}.ventas WHERE empresa_id=$1 AND numero_control=$2 LIMIT 1`, [empresaId, numeroControl]);
-      if (yaExiste.rows.length) {
-        throw new Error(`La venta ${v.idVenta} (numero_control ${numeroControl}) ya existe. Abortando para no duplicar. Borrá las previas o cambiá los ID.`);
-      }
+      const ya = await client.query(`SELECT 1 FROM ${S}.ventas WHERE empresa_id=$1 AND numero_control=$2 LIMIT 1`, [empresaId, numeroControl]);
+      if (ya.rows.length) throw new Error(`La venta ${v.idVenta} (${numeroControl}) ya existe. Abortando para no duplicar.`);
 
-      // Cliente: match por ruc o documento; si no, crear.
       let clienteId: string | null = null;
       if (v.ruc || v.documento) {
-        const m = await client.query(
-          `SELECT id FROM ${S}.clientes WHERE empresa_id=$1 AND (($2::text <> '' AND ruc=$2) OR ($3::text <> '' AND documento=$3)) LIMIT 1`,
-          [empresaId, v.ruc ?? "", v.documento ?? ""]
-        );
+        const m = await client.query(`SELECT id FROM ${S}.clientes WHERE empresa_id=$1 AND (($2::text<>'' AND ruc=$2) OR ($3::text<>'' AND documento=$3)) LIMIT 1`, [empresaId, v.ruc ?? "", v.documento ?? ""]);
         if (m.rows.length) clienteId = m.rows[0].id;
       }
       if (!clienteId) {
-        const ins = await client.query(
-          `INSERT INTO ${S}.clientes (empresa_id, empresa, nombre_contacto, ruc, documento, condicion_pago)
-           VALUES ($1,$2,$2,$3,$4,'CREDITO') RETURNING id`,
-          [empresaId, v.razonSocial, v.ruc, v.documento]
-        );
-        clienteId = ins.rows[0].id;
-        clientesCreados++;
+        const ins = await client.query(`INSERT INTO ${S}.clientes (empresa_id, empresa, nombre_contacto, ruc, documento, condicion_pago) VALUES ($1,$2,$2,$3,$4,'CREDITO') RETURNING id`, [empresaId, v.razonSocial, v.ruc, v.documento]);
+        clienteId = ins.rows[0].id; clientesCreados++;
       }
-
-      // Venta a crédito (fecha histórica).
       const insV = await client.query(
-        `INSERT INTO ${S}.ventas (empresa_id, cliente_id, numero_control, moneda, subtotal, monto_iva, total, estado, tipo_venta, fecha, created_at)
-         VALUES ($1,$2,$3,$4,$5,0,$5,'completada','CREDITO',$6,$6) RETURNING id`,
-        [empresaId, clienteId, numeroControl, v.moneda === "USD" ? "USD" : "GS", v.total, `${v.fechaVenta}T12:00:00Z`]
-      );
-      const ventaId = insV.rows[0].id;
-      ventasCreadas++;
+        `INSERT INTO ${S}.ventas (empresa_id, cliente_id, numero_control, moneda, subtotal, monto_iva, total, estado, tipo_venta, fecha, created_at) VALUES ($1,$2,$3,$4,$5,0,$5,'completada','CREDITO',$6,$6) RETURNING id`,
+        [empresaId, clienteId, numeroControl, v.moneda === "USD" ? "USD" : "GS", v.total, `${v.fechaVenta}T12:00:00Z`]);
+      const ventaId = insV.rows[0].id; ventasCreadas++;
 
-      // Cuotas.
-      const plan = planCuotas(v);
+      const { obligaciones } = generarCronograma(v);
+      const p = pagos.get(v.idVenta);
       const monedaCxc = v.moneda === "USD" ? "USD" : "PYG";
-      for (const c of plan) {
+      const totalObligaciones = obligaciones.length;
+      for (let idx = 0; idx < obligaciones.length; idx++) {
+        const o = obligaciones[idx];
+        const secuencia = idx + 1; // numero_cuota correlativo y único por venta
+        // ¿pagada? Modo SEGURO: solo lo que está claro (pagado hasta cuota N,
+        // refuerzos/cancelación con fecha). El flag "saldada" (contado/cancelado)
+        // NO marca pagado por sí solo: queda pendiente hasta que el cliente confirme.
+        let pagada = false;
+        if (o.tipo === "cuota" && p && o.numero <= p.cuotasPagadas) pagada = true;
+        else if (o.tipo === "refuerzo" && p && o.numero <= p.refuerzosPagados) pagada = true;
+        else if (o.tipo === "cancelacion" && p?.cancelacionPagada) pagada = true;
+        const saldo = pagada ? 0 : o.monto;
+        const estado = pagada ? "pagado" : "pendiente";
+        const etiqueta = o.tipo === "cuota" ? `${numeroControl}-C${o.numero}` : o.tipo === "refuerzo" ? `${numeroControl}-R${o.numero}` : `${numeroControl}-CANC`;
         const insC = await client.query(
-          `INSERT INTO ${S}.cuentas_por_cobrar
-             (empresa_id, cliente_id, venta_id, numero_venta, fecha_emision, fecha_vencimiento, moneda, total, saldo, estado, numero_cuota, total_cuotas, observaciones)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$8,'pendiente',$9,$10,$11) RETURNING id`,
-          [empresaId, clienteId, ventaId, `${numeroControl}-C${c.numeroCuota}`, v.fechaVenta, c.fechaVencimiento, monedaCxc, c.monto, c.numeroCuota, c.totalCuotas, v.descripcion]
-        );
-        cuentaIdPorClave.set(`${v.idVenta}#${c.numeroCuota}`, insC.rows[0].id);
-        cuotasCreadas++;
+          `INSERT INTO ${S}.cuentas_por_cobrar (empresa_id, cliente_id, venta_id, numero_venta, fecha_emision, fecha_vencimiento, moneda, total, saldo, estado, numero_cuota, total_cuotas, tipo, observaciones) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,
+          [empresaId, clienteId, ventaId, etiqueta, v.fechaVenta, o.vencimiento, monedaCxc, o.monto, saldo, estado, secuencia, totalObligaciones, o.tipo, v.descripcion]);
+        oblCreadas++;
+        if (pagada) {
+          const fp = p?.fechaUltimoPago ?? o.vencimiento;
+          await client.query(`INSERT INTO ${S}.cobros_clientes (empresa_id, cliente_id, cuenta_por_cobrar_id, venta_id, fecha_pago, monto, metodo_pago, referencia) VALUES ($1,$2,$3,$4,$5,$6,'transferencia',$7)`,
+            [empresaId, clienteId, insC.rows[0].id, ventaId, `${fp}T12:00:00Z`, o.monto, "carga histórica"]);
+          cobrosCreados++;
+        }
       }
     }
-
-    // Pagos: aplicar y reducir saldo.
-    const pagosPorCuenta = new Map<string, number>(); // cuentaId -> pagado acumulado
-    for (const p of pagos) {
-      const cuentaId = cuentaIdPorClave.get(`${p.idVenta}#${p.numeroCuota}`);
-      if (!cuentaId) throw new Error(`Pago (fila ${p.fila}): no existe la cuota ${p.numeroCuota} de la venta ${p.idVenta}.`);
-      const cxc = await client.query<{ cliente_id: string; venta_id: string; total: number }>(
-        `SELECT cliente_id, venta_id, total FROM ${S}.cuentas_por_cobrar WHERE id=$1`, [cuentaId]
-      );
-      const row = cxc.rows[0];
-      await client.query(
-        `INSERT INTO ${S}.cobros_clientes (empresa_id, cliente_id, cuenta_por_cobrar_id, venta_id, fecha_pago, monto, metodo_pago, referencia)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-        [empresaId, row.cliente_id, cuentaId, row.venta_id, `${p.fechaPago}T12:00:00Z`, p.monto, p.metodo, p.referencia]
-      );
-      pagosCreados++;
-      pagosPorCuenta.set(cuentaId, (pagosPorCuenta.get(cuentaId) ?? 0) + p.monto);
-    }
-
-    // Recalcular saldo/estado de cada cuota tocada por pagos.
-    for (const [cuentaId, pagado] of pagosPorCuenta) {
-      const cxc = await client.query<{ total: number }>(`SELECT total FROM ${S}.cuentas_por_cobrar WHERE id=$1`, [cuentaId]);
-      const total = Number(cxc.rows[0].total);
-      const saldo = Math.max(0, total - pagado);
-      const estado = saldo <= 0 ? "pagado" : pagado > 0 ? "parcial" : "pendiente";
-      await client.query(`UPDATE ${S}.cuentas_por_cobrar SET saldo=$2, estado=$3, updated_at=now() WHERE id=$1`, [cuentaId, saldo, estado]);
-    }
-
     await client.query("COMMIT");
     console.log(`\n✅ IMPORTACIÓN COMPLETA`);
-    console.log(`   Clientes creados: ${clientesCreados}`);
-    console.log(`   Ventas creadas:   ${ventasCreadas}`);
-    console.log(`   Cuotas creadas:   ${cuotasCreadas}`);
-    console.log(`   Pagos aplicados:  ${pagosCreados}\n`);
+    console.log(`   Clientes creados: ${clientesCreados} · Ventas: ${ventasCreadas} · Obligaciones: ${oblCreadas} · Cobros: ${cobrosCreados}`);
+    if (revisar.length) console.log(`   (${revisar.length} venta(s) quedaron a revisar — ver arriba.)`);
+    console.log("");
   } catch (e) {
     try { await client.query("ROLLBACK"); } catch { /* noop */ }
-    console.error(`\n❌ Error — se revirtió TODO (no quedó nada a medias):`);
-    console.error(`   ${e instanceof Error ? e.message : e}\n`);
+    console.error(`\n❌ Error — se revirtió TODO: ${e instanceof Error ? e.message : e}\n`);
     process.exitCode = 1;
   } finally {
     await client.end();
